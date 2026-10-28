@@ -17,6 +17,7 @@ local storageService = nil
 local extraInventoryService = nil
 local weightService = nil
 local craftingService = nil
+local moneyService = nil
 
 local inventoryTypes = {
     extra = { label = 'Extra inventory', size = { x = 1, y = 1 } },
@@ -53,15 +54,28 @@ local function cleanMetadata(value)
     local function validValue(fieldValue, depth)
         if depth > 8 then return false end
         if type(fieldValue) == 'table' then
+            local namedFieldCount = 0
+            local arrayElementCount = 0
+            local largestArrayIndex = 0
             for fieldName, nestedValue in pairs(fieldValue) do
-                if type(fieldName) ~= 'string' or #fieldName > 128 or not validValue(nestedValue, depth + 1) then return false end
+                if type(fieldName) == 'string' then
+                    if #fieldName > 128 then return false end
+                    namedFieldCount = namedFieldCount + 1
+                elseif depth > 0 and inventoryCore.integer(fieldName, 1, 100000) then
+                    arrayElementCount = arrayElementCount + 1
+                    largestArrayIndex = math.max(largestArrayIndex, fieldName)
+                else return false end
+                if not validValue(nestedValue, depth + 1) then return false end
+            end
+            if arrayElementCount > 0 then
+                return namedFieldCount == 0 and largestArrayIndex == arrayElementCount
             end
             return true
         end
         return type(fieldValue) == 'string' or type(fieldValue) == 'boolean'
             or (type(fieldValue) == 'number' and fieldValue == fieldValue and math.abs(fieldValue) < 1e15)
     end
-    if not validValue(value, 0) then return nil, 'Metadata must contain finite JSON object values (maximum depth 8)' end
+    if not validValue(value, 0) then return nil, 'Metadata must contain finite JSON-compatible values (maximum depth 8)' end
     local encoded, jsonValue = pcall(json.encode, value)
     if not encoded or #jsonValue > maxMetadataBytes then return nil, 'Metadata too large' end
     return inventoryCore.copy(value)
@@ -199,18 +213,26 @@ local function commit(...)
         end
     end
     if #changedInventories == 0 then return true end
+    local cashReceipts, cashError = {}
+    if moneyService then cashReceipts, cashError = moneyService.Prepare(changedInventories, committedInventories) end
+    if not cashReceipts then
+        for _, inventory in ipairs(changedInventories) do restoreInventory(inventory.id) end
+        error(cashError or 'Cash transaction failed')
+    end
     if weightService and Config.DynamicContainerWeight then
         local overrides = {}
         for _, inventory in ipairs(changedInventories) do overrides[inventory.id] = inventory end
         local validated, valid, validationError = pcall(weightService.Validate, overrides)
         if not validated or not valid then
             for _, inventory in ipairs(changedInventories) do restoreInventory(inventory.id) end
+            if moneyService then moneyService.Rollback(cashReceipts) end
             error(validationError or (not validated and valid) or 'Weight limit exceeded')
         end
     end
     local callSucceeded, saved, saveError = pcall(database.Save, changedInventories)
     if not callSucceeded or not saved then
         for _, inventory in ipairs(changedInventories) do restoreInventory(inventory.id) end
+        if moneyService then moneyService.Rollback(cashReceipts) end
         error(saveError or (not callSucceeded and saved) or 'Database transaction failed')
     end
     for _, inventory in ipairs(changedInventories) do committedInventories[inventory.id] = inventoryCore.copy(inventory) end
@@ -282,6 +304,7 @@ local function ensurePlayerInventory(playerSource)
     end
     if database.CitizenId(playerSource) ~= citizenId then return nil, 'Player character changed while loading' end
     playerInventoryIds[playerSource] = inventoryId
+    if moneyService then moneyService.Reconcile(playerSource, inventory) end
     return inventory
 end
 
@@ -846,6 +869,17 @@ local function isRateLimited(playerSource)
     return limit.count > 25
 end
 
+local function usableItemCallback(playerSource, inventoryId, itemSnapshot, definition, registration)
+    return function()
+        -- Release inventory focus before the item's handler opens its own UI.
+        if definition.shouldClose == true then
+            sessions[playerSource] = nil
+            TriggerClientEvent('tss-inventory:close', playerSource, true)
+        end
+        return registration.handler(playerSource, itemSnapshot, inventoryId)
+    end
+end
+
 local function handleAction(playerSource, request)
     if type(request) ~= 'table' then return false, 'Invalid request' end
     if request.kind == 'cancelCraft' then return craftingService.Cancel(playerSource) end
@@ -905,13 +939,20 @@ local function handleAction(playerSource, request)
     if request.kind == 'use' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
         local definition = item and inventoryCore.definition(item.name)
-        if definition and definition.container then return storageService.OpenItem(playerSource, sourceInventory, request.itemId) end
+        if definition and definition.container then
+            local opened, openError = storageService.OpenItem(playerSource, sourceInventory, request.itemId)
+            if opened and definition.shouldClose == true then
+                sessions[playerSource] = nil
+                TriggerClientEvent('tss-inventory:close', playerSource, true)
+            end
+            return opened, openError
+        end
         if sourceInventory.id ~= playerInventoryIds[playerSource]
             and not (sourceInventory.type == 'extra' and extraInventoryService.CanAccess(playerSource, sourceInventory.id)) then return false, 'Use items from your own inventory' end
         local registration = item and usableItems[item.name]
         if not definition or not definition.useable or not registration then return false, 'Item cannot be used' end
         local itemSnapshot = inventoryCore.itemView(item)
-        return true, nil, function() registration.handler(playerSource, itemSnapshot, sourceInventory.id) end
+        return true, nil, usableItemCallback(playerSource, sourceInventory.id, itemSnapshot, definition, registration)
     end
     if (request.kind ~= 'move' and request.kind ~= 'quickMove') or not inventorySession[request.to] then return false, 'Invalid destination' end
     local targetInventory = loadInventory(request.to)
@@ -1008,12 +1049,17 @@ local function prepareCarriedUse(playerSource, selector)
         local opened, openError = openInventory(playerSource, sourceInventory.id)
         if not opened then return false, openError end
         if database.PlayerInventoryId(playerSource) ~= ownInventory.id then return false, 'Character changed' end
-        return storageService.OpenItem(playerSource, sourceInventory, item.id)
+        local containerOpened, containerError = storageService.OpenItem(playerSource, sourceInventory, item.id)
+        if containerOpened and definition.shouldClose == true then
+            sessions[playerSource] = nil
+            TriggerClientEvent('tss-inventory:close', playerSource, true)
+        end
+        return containerOpened, containerError
     end
     local registration = usableItems[item.name]
     if not registration then return false, 'Item cannot be used' end
     local itemSnapshot = inventoryCore.itemView(item)
-    return true, nil, function() registration.handler(playerSource, itemSnapshot, sourceInventory.id) end
+    return true, nil, usableItemCallback(playerSource, sourceInventory.id, itemSnapshot, definition, registration)
 end
 
 local function useBoundItem(playerSource, keyCode)
@@ -1261,6 +1307,10 @@ inventoryContext.createLinked = function(playerSource, parentInventory, item, ty
     return created, creationError
 end
 
+moneyService = TSSCreateMoneyService({
+    players = playerInventoryIds, identity = database.PlayerInventoryId, load = loadInventory,
+    locks = inventoryLocks, commit = commit,
+})
 craftingService = TSSCreateCraftingService({
     identity = database.PlayerInventoryId, load = loadInventory, locks = inventoryLocks,
     commit = commit, operation = runOperation, notify = notifyPlayer,
@@ -1317,6 +1367,6 @@ end)
 CreateThread(function()
     while true do
         Wait(1000)
-        if database.ready then runOperation(function() shopService.RevokeDistant(); dropService.Tick(); storageService.RevokeInvalid() end) end
+        if database.ready then runOperation(function() moneyService.Tick(); shopService.RevokeDistant(); dropService.Tick(); storageService.RevokeInvalid() end) end
     end
 end)

@@ -107,3 +107,17 @@ Define recipes in `data/crafting.lua`. The recipe key is the output item name. `
 Drag either ingredient onto the other in your own player inventory. Both selected stacks must contain the required amounts. A matching recipe previews the output and marks its space green. The output uses the target item's position if it fits, then the dragged item's position, then the first available space.
 
 Release to craft. A green outline fills around the result while crafting. Items cannot be moved or used and the inventory cannot be closed until it finishes. ESC cancels without consuming ingredients. The server checks the recipe, ingredients, space and weight, and only saves the result when its timer finishes.
+
+## Cash as an item
+
+Set `Config.MoneyAsItem = true` to link the main player inventory's `cash` items to the bridge cash account. It is enabled by default for testing. Set it to `false` and restart to use ordinary cash items without account syncing.
+
+The account balance sets the inventory cash amount when a character loads. Account changes made by other scripts sync within one second, and inventory access also checks the balance. Dropping cash or moving it into storage debits the account. Picking it up or moving it back credits the account. Cash in stashes, vehicles, wallets and backpacks is physical stored money and is not included in the spendable cash account.
+
+Cash shop purchases charge once and update the cash item. Bank purchases only charge the bank account. Failed inventory saves reverse cash account changes; failed shop saves refund the original payment account. Offline cash item edits are refused while this toggle is enabled.
+
+Cash has zero weight and a large stack limit while syncing is enabled. If an external cash grant arrives while there is no cash stack and no free slot, the funds stay safely in the account. The cash item appears when a slot becomes available. Cash items represent whole currency units; fractional account amounts remain in the account. No extra SQL table is required.
+
+## Close inventory on item use
+
+Items inherit `shouldClose = true` from `Config.ItemDefaults`. Using a registered usable item closes an open inventory before its handler runs, including context-menu use, double-click, item keys and the `UseItem` export. Set `shouldClose = false` on an item definition to keep the inventory open. The example wallet and backpack use `false` so opening their storage keeps the inventory visible.

@@ -257,3 +257,7 @@ Client opening exports return true when the request is sent. The server decides 
 ## Unsupported QB calls
 
 Use GetPlayerInventory instead of LoadInventory. TSS saves changes automatically, so SaveInventory is not needed. SetInventory, RemoveInventory, OpenInventoryById and the QB hook/listener exports are not provided.
+
+## Cash items
+
+When `Config.MoneyAsItem` is enabled, adding or removing `cash` in an online player's main inventory also changes their cash account. Moving cash into storage debits it; moving cash back credits it. Cash edits to offline player inventories are refused. Payment scripts should perform one cash operation; syncing handles the matching account or item change.

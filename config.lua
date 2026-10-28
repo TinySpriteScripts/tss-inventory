@@ -1,5 +1,6 @@
 Config = Config or {}
 Config.TSS = {}
+Config.MoneyAsItem = true -- main player inventory cash mirrors the bridge cash account
 Config.MaxDimension = 100
 Config.MaxCells = 10000
 Config.DynamicContainerWeight = true -- carried containers and equipped slots share the player weight
@@ -38,6 +39,7 @@ Config.ItemDefaults = {
     weight = 100, -- in grams
     stack = true,
     stackSize = 100,
+    shouldClose = true, -- close an open inventory when the item is used
     useable = true, -- just shows the use item in UI. if no script attatched then do nothing
     metadata = {}, -- never remove this field (you can define specific metadata to items per each item)
 }

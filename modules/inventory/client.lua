@@ -66,8 +66,8 @@ RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, ce
     SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize })
 end)
 
-RegisterNetEvent('tss-inventory:close', function()
-    if source == 65535 then closeInventory(false) end
+RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
+    if source == 65535 and (onlyIfOpen ~= true or isOpen) then closeInventory(false) end
 end)
 
 local function showItemBox(definition, action, amount)

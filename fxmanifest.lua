@@ -21,6 +21,7 @@ server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'modules/inventory/core.lua',
     'modules/crafting/server.lua',
+    'modules/money/server.lua',
     'modules/inventory/database.lua',
     'modules/inventory/weight.lua',
     'modules/inventory/exports.lua',

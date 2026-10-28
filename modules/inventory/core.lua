@@ -45,6 +45,11 @@ function inventoryCore.definition(itemName)
     local definition = inventoryCore.copy(Config.ItemDefaults)
     for fieldName, fieldValue in pairs(TSSItems[itemName]) do definition[fieldName] = inventoryCore.copy(fieldValue) end
     definition.name = itemName
+    if Config.MoneyAsItem and itemName == 'cash' then
+        definition.stack = true
+        definition.stackSize = 2147483647
+        definition.weight = 0
+    end
     definition.stackSize = definition.stack and definition.stackSize or 1
     return definition
 end
