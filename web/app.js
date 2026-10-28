@@ -14668,11 +14668,16 @@
   var storeVersion = 0;
   var hoverTimeout = null;
   var noticeTimeout = null;
+  var nextItemBoxId = 0;
   var dragAnimationFrame = null;
   var pressedItem = null;
   var windowDrag = null;
   var dialogDrag = null;
   var lastDialogPosition = null;
+  var layoutSavePromise = Promise.resolve();
+  var layoutSaveVersion = 0;
+  var currentPlayerInventoryId = null;
+  var pendingLayoutIds = /* @__PURE__ */ new Set();
   var inventoryState = {
     isOpen: false,
     inventories: [],
@@ -14693,7 +14698,15 @@
     tooltip: null,
     contextMenu: null,
     dialog: null,
-    notice: null
+    notice: null,
+    itemBoxes: [],
+    playerSettings: { notificationPosition: "middle-right" },
+    settingsOpen: false,
+    settingsDraft: { notificationPosition: "middle-right" },
+    settingsSaving: false,
+    lastTouchedInventoryId: null,
+    keybindCapture: null,
+    itemKeybinds: {}
   };
   try {
     const savedLayout = JSON.parse(localStorage.getItem("tss-layout-v1") || "{}");
@@ -14724,7 +14737,39 @@
     storeVersion += 1;
     subscribers.forEach((callback) => callback());
   }
+  function persistServerLayouts() {
+    if (isBrowserPreview) return;
+    const layouts = {};
+    for (const inventory of inventoryState.inventories) {
+      if (inventory.type === "drop" || inventory.id.startsWith("drop:")) continue;
+      const layout = inventoryState.layouts[inventory.id];
+      if (!layout) continue;
+      layouts[inventory.id] = {
+        x: Math.round(Math.max(0, Math.min(16384, layout.x))),
+        y: Math.round(Math.max(0, Math.min(16384, layout.y))),
+        dock: layout.dock || false,
+        minimised: Boolean(layout.minimised),
+        active: Boolean(
+          layout.dock && inventoryState.activeTabs[layout.dock] === inventory.id
+        )
+      };
+      pendingLayoutIds.add(inventory.id);
+    }
+    if (!Object.keys(layouts).length) return;
+    const saveVersion = ++layoutSaveVersion;
+    layoutSavePromise = layoutSavePromise.then(async () => {
+      const response = await sendNuiRequest("action", {
+        kind: "layout",
+        layouts
+      });
+      if (saveVersion === layoutSaveVersion) pendingLayoutIds.clear();
+      if (!response.ok)
+        showNotice(response.message || "Window layout could not be saved");
+    });
+    return layoutSavePromise;
+  }
   function saveLayout() {
+    void persistServerLayouts();
     try {
       const persistentLayouts = Object.fromEntries(
         Object.entries(inventoryState.layouts).filter(
@@ -14764,12 +14809,19 @@
   }
   function getInventoryLayout(inventory, inventoryIndex = 0) {
     if (!inventoryState.layouts[inventory.id]) {
+      const windowWidth = Math.min(
+        Math.max(220, inventory.size.x * inventoryState.cellSize + 16),
+        innerWidth - 24
+      );
+      const windowHeight = Math.min(
+        inventory.size.y * inventoryState.cellSize + 60,
+        innerHeight - 32
+      );
+      const defaultX = inventory.type === "shop" ? innerWidth - windowWidth - 60 : 60 + inventoryIndex * 350;
+      const defaultY = 90 + inventoryIndex * 45;
       inventoryState.layouts[inventory.id] = {
-        x: inventory.type === "shop" ? Math.max(
-          60,
-          innerWidth - inventory.size.x * inventoryState.cellSize - 76
-        ) : 60 + inventoryIndex * 350,
-        y: 90 + inventoryIndex * 45,
+        x: Math.max(12, Math.min(defaultX, innerWidth - windowWidth - 12)),
+        y: Math.max(12, Math.min(defaultY, innerHeight - windowHeight - 12)),
         dock: null,
         minimised: false,
         frontOrder: ++inventoryState.frontOrder
@@ -14825,6 +14877,7 @@
     }
   }
   function clearPopups() {
+    inventoryState.keybindCapture = null;
     clearTimeout(hoverTimeout);
     inventoryState.tooltip = null;
     inventoryState.contextMenu = null;
@@ -14870,6 +14923,7 @@
   function openItemContextMenu(inventory, item, pointerEvent) {
     pointerEvent.preventDefault();
     pointerEvent.stopPropagation();
+    touchInventory(inventory);
     cancelItemDrag(false);
     clearPopups();
     inventoryState.contextMenu = {
@@ -14949,10 +15003,51 @@
       account: getPaymentMethod(inventory)
     });
   }
+  function touchInventory(inventory) {
+    if (!(inventory.type === "player" && inventory.isOwn !== false))
+      inventoryState.lastTouchedInventoryId = inventory.id;
+  }
+  function getItemBinding(itemName) {
+    return Object.entries(inventoryState.itemKeybinds).find(
+      ([, binding]) => binding.itemName === itemName
+    )?.[1];
+  }
+  function captureItemKey(inventory, item) {
+    inventoryState.keybindCapture = {
+      inventoryId: inventory.id,
+      itemId: item.id
+    };
+    publishChanges();
+  }
+  function unbindItemKey(inventory, item) {
+    return requestItemAction(inventory, item, "unbindKey");
+  }
+  async function quickTransferItem(inventory, item, half) {
+    const ownInventory = inventoryState.inventories.find(
+      (candidate) => candidate.type === "player" && candidate.isOwn !== false
+    );
+    const destination = inventory.id === ownInventory?.id ? findInventory(inventoryState.lastTouchedInventoryId) : ownInventory;
+    if (!destination || destination.id === inventory.id)
+      return showNotice("Click the destination inventory first");
+    if (half && item.amount < 2) return showNotice("Stack cannot be split");
+    if (destination.type === "shop" || inventory.type === "shop")
+      return showNotice("Shop items must be purchased");
+    await requestItemAction(inventory, item, "quickMove", {
+      to: destination.id,
+      targetRevision: destination.revision,
+      half
+    });
+  }
   function pressInventoryItem(inventory, item, pointerEvent) {
     if (pointerEvent.button !== 0 || inventoryState.drag || inventoryState.isRequestPending)
       return;
     pointerEvent.preventDefault();
+    if (pointerEvent.ctrlKey || pointerEvent.shiftKey) {
+      pointerEvent.stopPropagation();
+      pressedItem = null;
+      void quickTransferItem(inventory, item, pointerEvent.ctrlKey);
+      return;
+    }
     const itemBounds = pointerEvent.currentTarget.getBoundingClientRect();
     inventoryState.pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
     pressedItem = {
@@ -15013,7 +15108,7 @@
       return result(false, "Outside inventory");
     if (inventory.whitelist?.length && !inventory.whitelist.includes(item.name) || inventory.blacklist?.includes(item.name))
       return result(false, "Item not allowed");
-    if (inventory.id !== drag.inventoryId && inventory.maxWeight != null && (inventory.weight || 0) + item.definition.weight * drag.quantity > inventory.maxWeight)
+    if (inventory.id !== drag.inventoryId && !inventory.dynamicContainerWeight && inventory.maxWeight != null && (inventory.weight || 0) + item.definition.weight * drag.quantity > inventory.maxWeight)
       return result(false, "Weight limit exceeded");
     const otherItems = inventory.items.filter(
       (candidate) => !(inventory.id === drag.inventoryId && candidate.id === item.id)
@@ -15098,7 +15193,7 @@
         inventoryState.pointer.y
       );
       const isWorldBackground = pointerElement?.closest("#inventory") && !pointerElement.closest(".window, #dialog, #context, footer");
-      if (isWorldBackground && sourceInventory.type === "player" && sourceInventory.isOwn !== false) {
+      if (isWorldBackground && (sourceInventory.type === "player" && sourceInventory.isOwn !== false || sourceInventory.isPlayerExtra === true)) {
         requestItemAction(sourceInventory, item, "drop", {
           amount: drag.quantity,
           rotated: drag.isRotated
@@ -15139,6 +15234,7 @@
     };
   }
   function focusInventory(inventory) {
+    touchInventory(inventory);
     getInventoryLayout(inventory).frontOrder = ++inventoryState.frontOrder;
     publishChanges();
   }
@@ -15153,6 +15249,8 @@
     publishChanges();
   }
   function selectInventoryTab(dockSlotId, inventoryId) {
+    const inventory = findInventory(inventoryId);
+    if (inventory) touchInventory(inventory);
     inventoryState.activeTabs[dockSlotId] = inventoryId;
     saveLayout();
     publishChanges();
@@ -15163,14 +15261,74 @@
     saveLayout();
     publishChanges();
   }
-  function resetInventoryLayout() {
+  var NOTIFICATION_POSITIONS = [
+    { value: "top-left", label: "Top left" },
+    { value: "top-center", label: "Top centre" },
+    { value: "top-right", label: "Top right" },
+    { value: "middle-left", label: "Middle left" },
+    { value: "middle-right", label: "Middle right" },
+    { value: "bottom-left", label: "Bottom left" },
+    { value: "bottom-center", label: "Bottom centre" },
+    { value: "bottom-right", label: "Bottom right" }
+  ];
+  function setNotificationPosition(position) {
+    if (!NOTIFICATION_POSITIONS.some((option) => option.value === position))
+      return;
+    inventoryState.settingsDraft.notificationPosition = position;
+    publishChanges();
+  }
+  async function closeInventorySettings() {
+    if (inventoryState.settingsSaving) return;
+    inventoryState.settingsOpen = false;
+    publishChanges();
+    await sendNuiRequest("settingsClosed", {
+      inventoryOpen: inventoryState.isOpen
+    });
+  }
+  async function saveInventorySettings() {
+    if (inventoryState.settingsSaving) return;
+    inventoryState.settingsSaving = true;
+    publishChanges();
+    const response = await sendNuiRequest("action", {
+      kind: "preferences",
+      settings: inventoryState.settingsDraft
+    });
+    inventoryState.settingsSaving = false;
+    if (!response.ok) {
+      showNotice(response.message || "Settings could not be saved");
+      return;
+    }
+    inventoryState.playerSettings = {
+      ...inventoryState.playerSettings,
+      ...inventoryState.settingsDraft
+    };
+    await closeInventorySettings();
+  }
+  async function resetInventoryLayout() {
+    await layoutSavePromise;
+    const response = await sendNuiRequest("action", { kind: "resetWindows" });
+    if (!response.ok)
+      showNotice(response.message || "Window positions could not be reset");
+    else showNotice("Window positions reset");
+  }
+  function applyWindowReset() {
     inventoryState.layouts = {};
     inventoryState.activeTabs = {};
+    pendingLayoutIds.clear();
+    layoutSaveVersion += 1;
+    windowDrag = null;
+    inventoryState.isDockKeyHeld = false;
+    inventoryState.areDockSlotsVisible = false;
+    inventoryState.dockTarget = null;
+    try {
+      localStorage.removeItem("tss-layout-v1");
+    } catch {
+    }
     inventoryState.inventories.forEach(getInventoryLayout);
-    saveLayout();
     publishChanges();
   }
   async function closeInventoryWindow(inventory) {
+    await layoutSavePromise;
     inventoryState.inventories = inventoryState.inventories.filter(
       (candidate) => candidate.id !== inventory.id
     );
@@ -15179,6 +15337,7 @@
     if (!inventoryState.inventories.length) closeInventoryUi();
   }
   async function closeInventoryUi() {
+    await layoutSavePromise;
     inventoryState.isOpen = false;
     inventoryState.dialog = null;
     clearPopups();
@@ -15289,7 +15448,50 @@
     publishChanges();
   }
   function handleKeyDown(keyboardEvent) {
+    if (inventoryState.keybindCapture) {
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopImmediatePropagation();
+      if (keyboardEvent.repeat) return;
+      if (keyboardEvent.key === "Escape") {
+        inventoryState.keybindCapture = null;
+        publishChanges();
+        return;
+      }
+      const capture = inventoryState.keybindCapture;
+      const inventory = findInventory(capture.inventoryId);
+      const item = inventory?.items.find(
+        (candidate) => candidate.id === capture.itemId
+      );
+      if (inventory && item)
+        void requestItemAction(inventory, item, "bindKey", {
+          keyCode: keyboardEvent.keyCode,
+          keyLabel: keyboardEvent.key === " " ? "Space" : keyboardEvent.key
+        });
+      return;
+    }
+    if (inventoryState.settingsOpen) {
+      if (keyboardEvent.key === "Escape") {
+        keyboardEvent.preventDefault();
+        void closeInventorySettings();
+      } else if (keyboardEvent.key === "Tab") {
+        keyboardEvent.preventDefault();
+        const controls = Array.from(
+          document.querySelectorAll(
+            "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled)"
+          )
+        );
+        const focusedIndex = controls.indexOf(document.activeElement);
+        const direction = keyboardEvent.shiftKey ? -1 : 1;
+        controls[(focusedIndex + direction + controls.length) % controls.length]?.focus();
+      }
+      return;
+    }
     if (!inventoryState.isOpen) return;
+    if (!keyboardEvent.repeat && keyboardEvent.key !== "Escape" && !inventoryState.dialog && !inventoryState.drag && !windowDrag && !["INPUT", "TEXTAREA", "SELECT"].includes(keyboardEvent.target.tagName) && !keyboardEvent.target.isContentEditable && inventoryState.itemKeybinds[String(keyboardEvent.keyCode)]) {
+      keyboardEvent.preventDefault();
+      void sendNuiRequest("useItemKey", { keyCode: keyboardEvent.keyCode });
+      return;
+    }
     if (keyboardEvent.code === "KeyD" && !inventoryState.dialog && !["INPUT", "TEXTAREA"].includes(keyboardEvent.target.tagName) && !keyboardEvent.target.isContentEditable) {
       keyboardEvent.preventDefault();
       inventoryState.isDockKeyHeld = true;
@@ -15340,7 +15542,60 @@
   function handleServerMessage(messageEvent) {
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "sync") {
+    if (message.type === "itemKeybinds") {
+      inventoryState.itemKeybinds = message.bindings || {};
+      publishChanges();
+    } else if (message.type === "openSettings") {
+      inventoryState.playerSettings = {
+        notificationPosition: "middle-right",
+        ...message.settings
+      };
+      inventoryState.settingsDraft = { ...inventoryState.playerSettings };
+      inventoryState.settingsOpen = true;
+      clearPopups();
+      cancelItemDrag(false);
+      publishChanges();
+    } else if (message.type === "preferences") {
+      inventoryState.playerSettings = {
+        notificationPosition: "middle-right",
+        ...message.settings
+      };
+      publishChanges();
+    } else if (message.type === "resetLayouts") {
+      applyWindowReset();
+    } else if (message.type === "itemBox") {
+      if (!message.definition || !["added", "removed"].includes(message.action))
+        return;
+      const notificationId = ++nextItemBoxId;
+      inventoryState.itemBoxes = [
+        ...inventoryState.itemBoxes.slice(-2),
+        {
+          id: notificationId,
+          definition: message.definition,
+          action: message.action,
+          amount: message.amount || 1
+        }
+      ];
+      publishChanges();
+      setTimeout(() => {
+        inventoryState.itemBoxes = inventoryState.itemBoxes.filter(
+          (notification) => notification.id !== notificationId
+        );
+        publishChanges();
+      }, 2500);
+    } else if (message.type === "sync") {
+      const ownInventory = message.inventories?.find(
+        (inventory) => inventory.isOwn === true
+      );
+      if (ownInventory && currentPlayerInventoryId !== ownInventory.id) {
+        currentPlayerInventoryId = ownInventory.id;
+        inventoryState.layouts = {};
+        inventoryState.activeTabs = {};
+        inventoryState.lastTouchedInventoryId = null;
+        inventoryState.itemKeybinds = {};
+        pendingLayoutIds.clear();
+        layoutSaveVersion += 1;
+      }
       cancelItemDrag(false);
       const incomingInventoryIds = new Set(
         (message.inventories || []).map((inventory) => inventory.id)
@@ -15356,6 +15611,27 @@
           }
         }
       }
+      for (const inventory of message.inventories || []) {
+        if (inventory.layoutSettings === void 0 || pendingLayoutIds.has(inventory.id) || windowDrag?.inventoryId === inventory.id)
+          continue;
+        if (inventory.layoutSettings === false)
+          delete inventoryState.layouts[inventory.id];
+        else
+          inventoryState.layouts[inventory.id] = {
+            ...inventory.layoutSettings,
+            dock: inventory.layoutSettings.dock || null,
+            frontOrder: inventoryState.layouts[inventory.id]?.frontOrder || ++inventoryState.frontOrder
+          };
+      }
+      for (const inventory of message.inventories || []) {
+        if (inventory.layoutSettings?.active && inventory.layoutSettings.dock && !pendingLayoutIds.has(inventory.id)) {
+          inventoryState.activeTabs[inventory.layoutSettings.dock] = inventory.id;
+        }
+      }
+      if (ownInventory?.itemKeybinds)
+        inventoryState.itemKeybinds = ownInventory.itemKeybinds;
+      if (ownInventory?.playerSettings)
+        inventoryState.playerSettings = { ...ownInventory.playerSettings };
       inventoryState.inventories = message.inventories || [];
       inventoryState.visibleMetadata = message.visibleMetadata || {};
       inventoryState.cellSize = message.cellSize || 48;
@@ -15363,10 +15639,22 @@
       inventoryState.inventories.forEach(getInventoryLayout);
       if (inventoryState.dialog && !findInventory(inventoryState.dialog.inventoryId))
         inventoryState.dialog = null;
-      clearPopups();
+      const capture = inventoryState.keybindCapture;
+      const capturedInventory = capture && findInventory(capture.inventoryId);
+      const capturedItem = capturedInventory?.items.find(
+        (item) => item.id === capture.itemId
+      );
+      if (capture && capturedItem && inventoryState.contextMenu) {
+        inventoryState.contextMenu = {
+          ...inventoryState.contextMenu,
+          inventory: capturedInventory,
+          item: capturedItem
+        };
+      } else clearPopups();
       publishChanges();
     } else if (message.type === "close") {
       inventoryState.isOpen = false;
+      inventoryState.settingsOpen = false;
       inventoryState.dialog = null;
       windowDrag = null;
       inventoryState.isDockKeyHeld = false;
@@ -15395,6 +15683,7 @@
     document.addEventListener("pointerdown", (pointerEvent) => {
       if (!pointerEvent.target.closest("#context") && inventoryState.contextMenu) {
         inventoryState.contextMenu = null;
+        inventoryState.keybindCapture = null;
         publishChanges();
       }
     });
@@ -15489,7 +15778,7 @@
   }) {
     const [hasImageError, setHasImageError] = (0, import_react.useState)(false);
     const imageName = item.definition.image;
-    const imageIsAvailable = imageName && /^[\w.-]+\.png$/i.test(imageName) && !hasImageError;
+    const imageIsAvailable = imageName && /^[\w.-]+\.(png|svg)$/i.test(imageName) && !hasImageError;
     if (!imageIsAvailable)
       return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "fallback", children: item.definition.label || item.name });
     const imageStyle = isRotated || isGhost ? {
@@ -15540,7 +15829,10 @@
         onContextMenu: (pointerEvent) => openItemContextMenu(inventory, item, pointerEvent),
         onMouseEnter: (pointerEvent) => scheduleItemTooltip(item, pointerEvent),
         onMouseLeave: hideItemTooltip,
-        onDoubleClick: () => isShop ? openQuantityDialog(inventory, item, true) : requestItemAction(inventory, item, "use"),
+        onDoubleClick: (pointerEvent) => {
+          if (pointerEvent.ctrlKey || pointerEvent.shiftKey) return;
+          return isShop ? openQuantityDialog(inventory, item, true) : requestItemAction(inventory, item, "use");
+        },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: isShop ? item.stock === false ? "\u221E" : item.stock : item.amount }),
@@ -15717,6 +16009,7 @@
       "section",
       {
         className: `window${isDocked ? " docked" : layout.minimised ? " minimised" : ""}`,
+        onPointerDownCapture: () => touchInventory(inventory),
         "data-dock": dockSlotId || void 0,
         "data-inventory": isDocked ? void 0 : inventory.id,
         style: windowStyle,
@@ -15813,14 +16106,10 @@
     if (!tooltip) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "tooltip", hidden: true });
     const item = tooltip.item;
     const definition = item.definition;
-    const size = getItemFootprint(item);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "tooltip", position: tooltip, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: definition.label || item.name }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: definition.description || definition.category }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Size", value: `${size.x} \xD7 ${size.y}` }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Quantity", value: item.amount }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Item ID", value: item.id }),
       item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Price", value: `$${item.price} each` }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -15850,33 +16139,19 @@
     const contextMenu = inventoryState.contextMenu;
     if (!contextMenu) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "context", hidden: true });
     const { inventory, item } = contextMenu;
+    const binding = getItemBinding(item.name);
+    const isCapturing = inventoryState.keybindCapture?.inventoryId === inventory.id && inventoryState.keybindCapture?.itemId === item.id;
+    const canDrop = inventory.type === "player" && inventory.isOwn !== false || inventory.isPlayerExtra === true;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
-      inventory.type === "shop" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          disabled: item.stock === 0,
-          onClick: () => openQuantityDialog(inventory, item, true),
-          children: "Buy amount\u2026"
-        }
-      ) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            disabled: !item.definition.useable,
-            onClick: () => requestItemAction(inventory, item, "use"),
-            children: "Use"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
-          {
-            disabled: item.amount < 2,
-            onClick: () => openQuantityDialog(inventory, item),
-            children: "Split stack"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item), children: "Move quantity\u2026" }),
-        inventory.type === "player" && inventory.isOwn !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      inventory.type === "shop" ? item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+        item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
+        (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
+          "Unbind key (",
+          binding.keyLabel,
+          ")"
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => captureItemKey(inventory, item), children: isCapturing ? "Press a key\u2026" : "Keybind" })),
+        item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item), children: "Split stack" }),
+        canDrop && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
             {
@@ -15886,10 +16161,9 @@
               children: "Drop"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
             {
-              disabled: item.amount < 2,
               onClick: () => openQuantityDialog(inventory, item, false, "drop"),
               children: "Drop amount\u2026"
             }
@@ -15934,16 +16208,45 @@
               isPurchase ? "Buy " : isDrop ? "Drop " : "",
               item.definition.label
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "div",
               {
-                ref: quantityReference,
-                type: "number",
-                min: 1,
-                max: maximum,
-                value: dialog.quantity,
-                "aria-label": isPurchase ? "Buy quantity" : isDrop ? "Drop quantity" : "Quantity",
-                onChange: (changeEvent) => updateDialogQuantity(changeEvent.target.value)
+                className: !isPurchase && !isDrop ? "quantity-entry split-quantity" : "quantity-entry",
+                children: [
+                  !isPurchase && !isDrop && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "split-presets", "aria-label": "Quick split", children: [25, 50, 75].map((percentage) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "button",
+                    {
+                      onClick: () => updateDialogQuantity(
+                        String(
+                          Math.max(
+                            1,
+                            Math.min(
+                              item.amount - 1,
+                              Math.floor(item.amount * percentage / 100)
+                            )
+                          )
+                        )
+                      ),
+                      children: [
+                        percentage,
+                        "%"
+                      ]
+                    },
+                    percentage
+                  )) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      ref: quantityReference,
+                      type: "number",
+                      min: 1,
+                      max: maximum,
+                      value: dialog.quantity,
+                      "aria-label": isPurchase ? "Buy quantity" : isDrop ? "Drop quantity" : "Quantity",
+                      onChange: (changeEvent) => updateDialogQuantity(changeEvent.target.value)
+                    }
+                  )
+                ]
               }
             ),
             isPurchase && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "purchase-total", children: [
@@ -16007,6 +16310,125 @@
       }
     );
   }
+  function InventorySettings() {
+    const positionSelect = (0, import_react.useRef)(null);
+    (0, import_react.useLayoutEffect)(() => {
+      if (inventoryState.settingsOpen) positionSelect.current?.focus();
+    }, [inventoryState.settingsOpen]);
+    if (!inventoryState.settingsOpen) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-overlay", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "section",
+      {
+        id: "inventory-settings",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-labelledby": "settings-title",
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "settings-title", children: "Inventory settings" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                "aria-label": "Close settings",
+                disabled: inventoryState.settingsSaving,
+                onClick: closeInventorySettings,
+                children: "\uFFFD"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-content", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { htmlFor: "notification-position", children: "Notification position" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "select",
+              {
+                id: "notification-position",
+                ref: positionSelect,
+                value: inventoryState.settingsDraft.notificationPosition,
+                disabled: inventoryState.settingsSaving,
+                onChange: (event) => setNotificationPosition(event.target.value),
+                children: NOTIFICATION_POSITIONS.map((position) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: position.value, children: position.label }, position.value))
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "A preview appears at the selected position." }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-reset", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Restore default window positions." }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  disabled: inventoryState.settingsSaving,
+                  onClick: resetInventoryLayout,
+                  children: "Reset windows"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  disabled: inventoryState.settingsSaving,
+                  onClick: closeInventorySettings,
+                  children: "Cancel"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "confirm",
+                  disabled: inventoryState.settingsSaving,
+                  onClick: saveInventorySettings,
+                  children: inventoryState.settingsSaving ? "Saving\uFFFD" : "Save"
+                }
+              )
+            ] })
+          ] })
+        ]
+      }
+    ) });
+  }
+  function ItemBoxNotifications() {
+    const position = (inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings).notificationPosition || "middle-right";
+    const [vertical, horizontal] = position.split("-");
+    const style = {
+      top: vertical === "top" ? 24 : vertical === "middle" ? "50%" : "auto",
+      bottom: vertical === "bottom" ? 24 : "auto",
+      left: horizontal === "left" ? 24 : horizontal === "center" ? "50%" : "auto",
+      right: horizontal === "right" ? 24 : "auto",
+      transform: `translate(${horizontal === "center" ? "-50%" : "0"}, ${vertical === "middle" ? "-50%" : "0"})`
+    };
+    const notifications = inventoryState.settingsOpen ? [
+      {
+        id: "preview",
+        definition: {
+          name: "bandage",
+          label: "Bandage",
+          image: "bandage.png",
+          size: { x: 1, y: 1 }
+        },
+        action: "added"
+      }
+    ] : inventoryState.itemBoxes;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "aside",
+      {
+        className: "item-box-notifications",
+        "data-position": position,
+        style,
+        "aria-live": "polite",
+        children: notifications.map((notification) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "item-box-notification", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "item-box-image", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            ItemImage,
+            {
+              item: {
+                name: notification.definition.name,
+                definition: notification.definition
+              }
+            }
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: notification.action === "added" ? "Added" : "Removed" })
+        ] }, notification.id))
+      }
+    );
+  }
   function InventoryApp() {
     (0, import_react.useSyncExternalStore)(subscribeToInventory, getStoreVersion);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
@@ -16033,6 +16455,8 @@
       (0, import_react_dom.createPortal)(
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DragGhost, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventorySettings, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {}),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "toast", hidden: !inventoryState.notice, children: inventoryState.notice })
         ] }),
         document.body

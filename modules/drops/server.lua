@@ -208,7 +208,9 @@ function TSSCreateWorldDropService(inventoryContext)
     end
 
     function dropService.Drop(playerSource, sourceInventory, itemId, quantity, isRotated)
-        if inventoryContext.identity(playerSource) ~= sourceInventory.id or sourceInventory.type ~= 'player' then
+        local isOwnInventory = inventoryContext.identity(playerSource) == sourceInventory.id and sourceInventory.type == 'player'
+        local isOwnExtra = sourceInventory.type == 'extra' and inventoryContext.extraAccess(playerSource, sourceInventory.id)
+        if not isOwnInventory and not isOwnExtra then
             return false, 'Only items in your own inventory can be dropped'
         end
 
@@ -313,6 +315,63 @@ function TSSCreateWorldDropService(inventoryContext)
 
     function dropService.PlayerDisconnected(playerSource)
         knownPlayerBuckets[playerSource] = nil
+    end
+
+    function dropService.RestoreInventory(inventoryId, inventory)
+        if inventoryId:sub(1, 5) ~= 'drop:' then return end
+        worldDrops[inventoryId] = inventory and { inventory = inventory, coords = inventory.coords, bucket = inventory.bucket } or nil
+    end
+
+    function dropService.Create(options)
+        if Config.WorldDrops.enable ~= true then return false, 'World drops are disabled' end
+        if type(options) ~= 'table' or type(options.items) ~= 'table' or #options.items == 0 then return false, 'Drop needs items' end
+        local coordinates = options.coords
+        if not coordinates then return false, 'Drop needs coordinates' end
+        local cleanedCoordinates = {}
+        for _, axis in ipairs({ 'x', 'y', 'z' }) do
+            local value = coordinates[axis]
+            if type(value) ~= 'number' or value ~= value or math.abs(value) > 100000 then return false, 'Invalid coordinates' end
+            cleanedCoordinates[axis] = value
+        end
+        if not inventoryCore.integer(options.bucket or 0, 0, 2147483647) then return false, 'Invalid routing bucket' end
+        if not inventoryCore.definition(options.items[1].name) then return false, 'Unknown item' end
+        local inventory, creationError = makeEmptyDrop(options.items[1], { coords = cleanedCoordinates, bucket = options.bucket or 0 })
+        if not inventory then return false, creationError end
+        if options.size then
+            if not inventoryCore.size(options.size) then return false, 'Invalid drop size' end
+            inventory.size = inventoryCore.copy(options.size)
+        end
+        if options.label then
+            if type(options.label) ~= 'string' or #options.label > 100 then return false, 'Invalid label' end
+            inventory.label = options.label
+        end
+        local metadata, metadataError = inventoryContext.metadata(options.metadata or {})
+        if not metadata then return false, metadataError end
+        inventory.metadata = metadata
+        for _, item in ipairs(options.items) do
+            local itemMetadata, itemMetadataError = inventoryContext.metadata(item.metadata or {})
+            if not itemMetadata then return false, itemMetadataError end
+            local added, itemError = inventoryCore.add(inventory, item.name, item.amount or 1, itemMetadata, item.rotated)
+            if not added then return false, itemError end
+        end
+        inventoryContext.put(inventory)
+        worldDrops[inventory.id] = { inventory = inventory, coords = inventory.coords, bucket = inventory.bucket }
+        inventoryContext.commit(inventory)
+        syncWorldDrops()
+        return true, inventoryCore.copy(inventory)
+    end
+
+    function dropService.List()
+        local result = {}
+        for _, drop in pairs(worldDrops) do result[#result + 1] = inventoryCore.copy(drop.inventory) end
+        return result
+    end
+
+    function dropService.Remove(inventoryId)
+        if not worldDrops[inventoryId] then return false, 'Drop not found' end
+        worldDrops[inventoryId].inventory.items = {}
+        inventoryContext.commit(worldDrops[inventoryId].inventory)
+        return true
     end
 
     return dropService

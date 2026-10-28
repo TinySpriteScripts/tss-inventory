@@ -1,7 +1,7 @@
- -- will contain all data related to vehicle inventories
+-- A model entry replaces its class entry. Use false to disable a compartment.
 Config = Config or {}
+TSSVehicles = TSSVehicles or {}
 
--- no need to edit unless youve forced extra classes
 Config.VehicleClasses = {
     compact = 0,
     sedan = 1,
@@ -28,28 +28,106 @@ Config.VehicleClasses = {
     open_wheel = 22,
 }
 
-TSSVehicles = TSSVehicles or {
-    compact = { -- example of vehicle class which can be overriden by a specific vehicle model name
-        trunk = { -- if nil then no trunkk available on these vehicles
-            label = "Trunk",
-            size = {x=5,y=5},
-            whitelist = {},
-            blacklist = {},
-        },
-        glovebox = {
-            label = "Glovebox",
-            size = {x=4,y=2},
-            whitelist = {},
-            blacklist = {},
-        },
+local vehicleDefinitions = {
+    compact = {
+        trunk = { label = 'Trunk', size = { x = 5, y = 5 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    sedan = {
+        trunk = { label = 'Trunk', size = { x = 6, y = 5 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    suv = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 6 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    coupe = {
+        trunk = { label = 'Trunk', size = { x = 5, y = 4 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    muscle = {
+        trunk = { label = 'Trunk', size = { x = 6, y = 5 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    sports_classic = {
+        trunk = { label = 'Trunk', size = { x = 5, y = 4 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    sport = {
+        trunk = { label = 'Trunk', size = { x = 5, y = 4 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    super = {
+        trunk = { label = 'Trunk', size = { x = 4, y = 3 } },
+        glovebox = { label = 'Glovebox', size = { x = 3, y = 2 } },
+    },
+    motorcycle = {
+        trunk = { label = 'Trunk', size = { x = 3, y = 3 } },
+        glovebox = false,
+    },
+    offroad = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 6 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    industrial = {
+        trunk = { label = 'Trunk', size = { x = 10, y = 10 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    utility = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 8 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    vans = {
+        trunk = { label = 'Trunk', size = { x = 10, y = 8 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    cycle = {
+        trunk = false,
+        glovebox = false,
+    },
+    boat = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 6 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    helicopter = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 6 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    plane = {
+        trunk = { label = 'Trunk', size = { x = 10, y = 10 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    service = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 8 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    emergency = {
+        trunk = { label = 'Trunk', size = { x = 8, y = 6 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    military = {
+        trunk = { label = 'Trunk', size = { x = 10, y = 10 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    commercial = {
+        trunk = { label = 'Trunk', size = { x = 10, y = 15 } },
+        glovebox = { label = 'Glovebox', size = { x = 4, y = 2 } },
+    },
+    train = {
+        trunk = false,
+        glovebox = false,
+    },
+    open_wheel = {
+        trunk = false,
+        glovebox = false,
     },
     sultanrs = {
-        trunk = {
-            label = "SultanRS Trunk",
-            size = {x=10,y=20},
-            whitelist = {},
-            blacklist = {},
-        },
-        glovebox = nil, -- overrides vehicle class so it has no glovebox
-    }
+        class = 6,
+        trunk = { label = 'SultanRS Trunk', size = { x = 10, y = 20 } },
+        glovebox = false,
+    },
 }
+
+for vehicleKey, vehicleDefinition in pairs(vehicleDefinitions) do
+    TSSVehicles[vehicleKey] = vehicleDefinition
+end

@@ -39,7 +39,8 @@ function TSSCreateShopService(inventoryContext)
 
         if not validCoordinateType or not isFiniteNumber(coordinates.x)
             or not isFiniteNumber(coordinates.y) or not isFiniteNumber(coordinates.z)
-            or not inventoryCore.size(shopDefinition.size) then
+            or type(shopDefinition.size) ~= 'table'
+            or not inventoryCore.integer(shopDefinition.size.x, 1, Config.MaxDimension) then
             return false, 'Shop needs coordinates and valid grid size'
         end
 
@@ -82,15 +83,22 @@ function TSSCreateShopService(inventoryContext)
         local shopInventory = {
             id = inventoryId,
             type = 'shop',
+            last_updated = previousInventory and previousInventory.last_updated,
+            whitelist = {},
+            blacklist = {},
             shopId = shopId,
             label = shopDefinition.label or shopId,
-            size = inventoryCore.copy(shopDefinition.size),
-            metadata = {},
+            size = { x = shopDefinition.size.x, y = 2 },
+            metadata = previousInventory and inventoryCore.copy(previousInventory.metadata) or {},
+            settings = previousInventory and inventoryCore.copy(previousInventory.settings) or {},
+            coords = { x = coordinates.x, y = coordinates.y, z = coordinates.z },
             items = {},
             nextItemId = 1,
             revision = previousInventory and previousInventory.revision or 0,
             account = shopDefinition.account or 'cash',
         }
+
+        if not inventoryCore.size(shopInventory.size) then return false, 'Invalid shop width' end
 
         local itemNames = {}
         for itemName in pairs(shopDefinition.stock) do
@@ -136,7 +144,12 @@ function TSSCreateShopService(inventoryContext)
             }
 
             local itemColumn, itemRow = inventoryCore.space(shopInventory, shopItem)
-            if not itemColumn then return false, 'Shop grid too small' end
+            while not itemColumn do
+                local expandedSize = { x = shopInventory.size.x, y = shopInventory.size.y + 1 }
+                if not inventoryCore.size(expandedSize) then return false, 'Shop catalogue exceeds configured grid limits' end
+                shopInventory.size = expandedSize
+                itemColumn, itemRow = inventoryCore.space(shopInventory, shopItem)
+            end
 
             shopItem.x = itemColumn
             shopItem.y = itemRow
@@ -144,6 +157,7 @@ function TSSCreateShopService(inventoryContext)
             shopInventory.items[#shopInventory.items + 1] = shopItem
         end
 
+        local previousRegistration = registeredShops[shopId]
         registeredShops[shopId] = {
             inventoryId = inventoryId,
             coords = { x = coordinates.x, y = coordinates.y, z = coordinates.z },
@@ -153,7 +167,11 @@ function TSSCreateShopService(inventoryContext)
         }
 
         inventoryContext.put(shopInventory)
-        inventoryContext.commit(shopInventory)
+        local committed, commitError = pcall(inventoryContext.commit, shopInventory)
+        if not committed then
+            registeredShops[shopId] = previousRegistration
+            return false, tostring(commitError)
+        end
         return true
     end
 
@@ -287,8 +305,18 @@ function TSSCreateShopService(inventoryContext)
         playerInventory.nextItemId = plannedInventory.nextItemId
         if shopItem.stock ~= false then shopItem.stock = shopItem.stock - purchaseRequest.amount end
 
-        inventoryContext.commit(playerInventory, shopInventory)
+        local saved, saveError = pcall(inventoryContext.commit, playerInventory, shopInventory)
         unlockInventories()
+        if not saved then
+            if purchaseCost > 0 then
+                local refunded, refundResult = pcall(bridge.Banking.AddMoney, playerSource, paymentAccount, purchaseCost, 'tss-inventory:database-refund')
+                if not refunded or refundResult ~= true then
+                    print(('[tss-inventory] REFUND REQUIRED player=%s cost=%s'):format(playerSource, purchaseCost))
+                end
+            end
+            print('[tss-inventory] Purchase save failed: ' .. tostring(saveError))
+            return false, 'Purchase could not be saved'
+        end
 
         TriggerEvent('tss-inventory:purchase', playerSource, {
             shop = purchaseRequest.from,
@@ -316,6 +344,10 @@ function TSSCreateShopService(inventoryContext)
 
             if sessionChanged then inventoryContext.send(playerSource) end
         end
+    end
+
+    function shopService.RestoreInventory(inventoryId, inventory)
+        if not inventory and inventoryId:sub(1, 5) == 'shop:' then registeredShops[inventoryId:sub(6)] = nil end
     end
 
     return shopService

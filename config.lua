@@ -3,6 +3,7 @@ Config.TSS = {}
 Config.MaxDimension = 40
 Config.MaxCells = 800
 Config.MaxMetadataBytes = 8192
+Config.DynamicContainerWeight = true -- carried containers and equipped slots share the player weight
 Config.MaxTransferDistance = 3.0 -- reserved for future world interactions
 Config.CellSize = 48 -- identical for every inventory; overflow scrolls
 Config.OpenKey = 'TAB'
@@ -20,6 +21,15 @@ Config.PlayerDefaults = {
     useNamePrefix = true, -- prefixes player inventory with their name in ui
     label = "Inventory", -- players first name inventory
     size = {x = 8, y = 10}, --the default inventory size (must be defined per inventory) (can be resized through exports)
+}
+
+-- these slots open as extra windows when your players inventory opens. can be used to store specific items seperate to main inventory
+Config.ExtraInventories = {
+    backpack_slot = { -- example of exra inv which can hold only backpack
+        label = "Backpack",
+        size = {x = 2, y = 3},
+        whitelist = {'backpack'},
+    },
 }
 
 -- if not defined per item will use this
@@ -47,4 +57,9 @@ Config.VehicleDefaults = {
 Config.VisibleItemMetadata = {
     usage = "Usage", -- metadata key and then the label thats shown in its place
     durability = "Durability",
+}
+Config.VehicleStorage = {
+    interactionDistance = 2.5,
+    serverDistance = 7.0, -- includes long vehicles; access is rechecked for every action
+    targetScanDistance = 12.0,
 }

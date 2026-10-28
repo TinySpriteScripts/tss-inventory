@@ -11,6 +11,15 @@
 
 * {
   box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 html,
@@ -531,3 +540,95 @@ input[type="number"]::-webkit-outer-spin-button {
 #dialog h3:active {
   cursor: grabbing;
 }
+
+.item-box-notifications {
+  position: fixed;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 200000;
+}
+
+.item-box-notification {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 130px;
+  padding: 8px 14px 8px 8px;
+  background: rgba(17, 19, 22, 0.94);
+  border-left: 2px solid #df4050;
+  color: #ededed;
+  font-size: 12px;
+}
+
+.item-box-image {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.item-box-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 199999;
+}
+
+#inventory-settings {
+  width: min(340px, calc(100vw - 32px));
+  background: rgba(17, 19, 22, 0.98);
+  color: #ededed;
+  border: 1px solid #34363a;
+  font-size: 12px;
+  box-shadow: 0 12px 36px #0005;
+}
+
+#inventory-settings header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 2px solid #df4050;
+}
+
+#inventory-settings button, #inventory-settings select {
+  background: #202226;
+  color: #ededed;
+  border: 1px solid #414349;
+  padding: 7px 12px;
+  font: inherit;
+}
+
+#inventory-settings button { cursor: pointer; }
+#inventory-settings button:disabled { opacity: 0.55; cursor: default; }
+#inventory-settings header button { padding: 2px 6px; border: none; background: none; }
+#inventory-settings .settings-content { padding: 16px; }
+#inventory-settings label { display: block; margin-bottom: 8px; }
+#inventory-settings select { width: 100%; }
+#inventory-settings p { color: #a3a5aa; margin: 8px 0 20px; }
+#inventory-settings .settings-reset { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+#inventory-settings .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+#inventory-settings .confirm { background: #cf3b4b; border-color: #cf3b4b; }
+#inventory-settings :focus-visible { outline: 1px solid #df4050; outline-offset: 2px; }
+
+.quantity-entry { display: flex; align-items: center; gap: 8px; }
+#dialog .quantity-entry input { min-width: 0; margin: 0; }
+#dialog .split-quantity input { width: 70px; flex: 0 0 70px; }
+.split-presets { display: flex; flex: 1; gap: 4px; }
+#dialog .split-presets button { flex: 1; min-width: 0; padding: 8px 4px; background: #202226; color: #ededed; border: 1px solid #414349; font: inherit; cursor: pointer; }
+#dialog .split-presets button:hover { border-color: #df4050; }

@@ -1,60 +1,97 @@
-# TSS Inventory — grid inventory with TSS Bridge
+# TSS Inventory
 
-Inventory storage remains independent of framework inventories and SQL. `tss_bridge` is now required for ped/target integrations, notifications and shop payments. McKleans Emporium is active at the Legion Square 24/7. See `SHOPS_AND_BRIDGE.md` for setup and adapter coverage. Vehicle detection, linked backpack items and weapons are not implemented. Local item images were copied from qb-inventory; it is not a runtime dependency.
+Standalone grid inventory with a React NUI, red accents, movable windows and eight docking regions. Hold D while dragging a window to reveal docking positions; inventories in the same region share tabs. Drag items to move them, press R during dragging to rotate, and drop onto the world area to create a temporary world drop.
 
-## Start and try
+## Startup
 
-1. Start your framework and target provider, then `ensure tss_bridge`, then `ensure tss-inventory`. After this update a clean server restart is recommended so existing bridge consumers load fresh module references.
-2. TAB or `/inv` opens your own inventory. ESC/TAB closes. Rebind through FiveM key settings if another resource owns TAB; this script does not disable the existing inventory.
-3. Console: `invadditem 1 radio 1`, `invadditem 1 bandage 12` (replace 1 with your player server ID).
-4. Console: `invcreate demo:stash stash` then `invopen demo:stash 1`. Try `invcreate demo:bag backpack` too.
-5. Hold the left mouse button on an item and drag it to another slot or inventory; tap R while holding to rotate. Release to place, or Escape to cancel. Right-click for details, use, split stack, or move quantity. Use reports no handler until a trusted server callback is registered; no other scripts are called.
-6. Drag a window header or tab and hold D to reveal eight adjoining docking slots around an open centre. Release the mouse over a slot while still holding D to dock. Inventories in the same slot become tabs. Drag tabs away without D or use the square control to undock. The grid docking button has been removed; the square still brings floating windows forward. Layout persists locally; Reset layout clears it.
-7. Target the Legion Square 24/7 clerk (24.47, -1346.62, 28.50). Drag a shop item into your inventory to buy one, or right-click Buy amount… for the themed quantity/total popup. Payments use framework cash through the bridge, not the inventory cash item.
+Configure oxmysql's connection in server.cfg and start resources in order:
 
-World drops are now available through the new drops modules and your Config.WorldDrops settings. Right-click Drop / Drop amount… or drag an owned item onto the empty game background. Drops pool nearby, open alongside TAB by default, and are never saved. See WORLD_DROPS.md for target mode, cleanup and persistence details.
+```cfg
+ensure oxmysql
+ensure tss_bridge
+ensure tss-inventory
+```
 
-## Admin permissions
+Enable the tss-inventory adapter in your bridge configuration when using it from other scripts. Player ownership uses the bridge's character identifier, so a framework character must be loaded before its personal inventory opens. Shop targeting/peds use the bridge. McKleans Emporium is configured at the Legion Square 24/7 in data/shops.lua.
 
-Admin commands use server `RegisterCommand(..., true)` and native ACE objects such as `command.invadditem`. Console is permitted. A FiveM `group.admin` with `command allow` already has access. Otherwise use the exact grants in `admin.example.cfg` and your existing admin principal setup. txAdmin web permissions or QBCore admin status alone do not grant these native ACE objects. The implementation follows the [official command ACL documentation](https://docs.fivem.net/docs/scripting-manual/migrating-from-deprecated/creating-commands/). Server.cfg and running resources were not changed.
+## Database
 
-| Command | Arguments |
-| --- | --- |
-| `/invhelp` | Show command list |
-| `/invadditem` | `<playerServerId OR inventoryId> <itemName> <amount>` |
-| `/invremoveitem` | `<target> <itemInstanceId> <amount>` |
-| `/invcreate` | `<uniqueInventoryId> <type>` (stash, backpack, wallet, registered type) |
-| `/invopen` | `<inventoryId> [playerServerId]` (omit player only in game) |
-| `/invresize` | `<target> <columns> <rows> [repack]` |
-| `/invmeta` | `<target> <JSON object>` |
-| `/invitemmeta` | `<target> <itemInstanceId> <JSON object>` |
-| `/invinspect` | `<target>` prints full inventory to server console |
+All SQL, table creation, database loading/saving and character lifecycle detection are in modules/inventory/database.lua. The resource creates two canonical tables at startup:
 
-Examples: `/invresize 1 10 8 repack`, `/invmeta demo:stash {"businessId":"mechanic","tier":2}`, `/invitemmeta 1 1 {"durability":85}`. Metadata setters REPLACE the object. Hover shows item instance ID. Purely numeric command targets are player IDs; use descriptive inventory IDs such as `business:mechanic:storage`.
+- `tss_inventory`: personal inventories keyed by `player_<citizenid>`, with a unique character owner.
+- `tss_inventory_containers`: stashes, trunks, gloveboxes, backpacks, shop catalogues and other persistent inventories; optional owner CID and coordinates.
 
-## Definitions, storage, metadata
+Both store complete items (including item metadata), separate inventory metadata, viewer settings, size, rules, revision, next item ID and a millisecond `last_updated` timestamp. Settings are keyed by viewer CID so a shared inventory has independent docking and floating preferences for each character. The browser receives only the current viewer's settings.
 
-- Existing config and container definitions are retained. The vehicle size typo was corrected. `config.lua`, `data/items.lua`, `data/containers.lua` define defaults. Item weight is grams, sizes are columns/rows. Empty whitelist is unrestricted; nonempty whitelist and blacklist are enforced.
-- Player identity uses the server-observed FiveM license: one standalone inventory per license, independent of character slots.
-- Instances store their own type, label, size, metadata, whitelist, blacklist, optional maxWeight, item instances and revision. Types are templates: changes affect future creation; edit saved instances explicitly through exports.
-- All grids use `Config.CellSize`; large grids scroll instead of stretching cells. Tap R while dragging to toggle item rotation; Escape cancels the drag. A translucent ghost follows the cursor, destination cells highlight red for valid placement or amber when blocked, and edge scrolling supports large grids. Rotation is saved per item instance and validated on the server. Stacks require identical names AND metadata; unstackable instances stay separate.
-- Resize preserves positions unless repack is requested. Invalid shrinking fails without changes. Repack uses an area-first packing heuristic; it can refuse some theoretically packable arrangements. Move items manually and retry in those cases.
-- Resource KVP storage saves every accepted mutation. Cross-inventory transfers write a redo journal before either participant and replay pending changes on restart. Back up your server resource KVP database. Storage is not the data folder or a qb database; renaming the resource requires migration.
-- Removed item definitions or changed footprints that invalidate saved items fail closed rather than wiping content. Restore compatible definitions before opening those inventories.
-- Metadata supports nested JSON objects, strings, finite numbers and booleans. Maximum depth 8; `Config.MaxMetadataBytes` limits encoded size. Arrays, functions, cycles and userdata are refused. Inventory and item metadata are replicated to authorised viewers, so keep secrets separately.
+Writes complete before success is acknowledged. Transfers save both participants together; a rejected write restores the cached state. Every accepted content/settings change updates last_updated. Each change saves immediately, so shutdown does not rely on a final flush.
 
-## Authority and access
+This is a fresh schema, without migrations or legacy import. If these table names already exist with an older development schema, stop the resource and drop those two development tables before starting it again. Startup creates missing tables and never drops existing data automatically.
 
-Clients can open only their own inventory directly. A trusted server command/export must grant access to other inventory IDs. Clients cannot create items, resize, edit metadata or choose arbitrary stashes. Server movement checks session grants, instance IDs, positive integer amounts, stack caps/metadata, collisions/bounds, weight, whitelist/blacklist, both revisions and request rate. Mutations do not yield and fresh snapshots broadcast to viewers.
+World drops are server memory only. Their contents, metadata and coordinates are never saved and disappear on resource/server restart. Dropping first saves the corresponding player inventory change. This intentionally means drops are temporary even though player inventories persist.
 
-`OpenInventory` grants access until the inventory/UI closes or the player disconnects. Server stash integrations must check authorisation/proximity before opening and revoke grants when conditions expire. Shops separately enforce their configured proximity/routing bucket on opening and every purchase, and distant shop grants are removed. Server resources are trusted callers; never wrap mutation exports in unchecked network events. This design follows [Cfx server-event guidance](https://docs.fivem.net/docs/developers/server-security/).
+## Configuration and code
 
-## Validation and in-game acceptance
+- config.lua: shared limits, defaults, controls and world-drop options.
+- data/items.lua: local item definition table registered into TSSItems; omitted fields inherit Config.ItemDefaults. Keep item names unique across files and list each extra file in shared_scripts.
+- data/containers.lua and data/vehicles.lua: creation templates/defaults.
+- data/shops.lua: shop definitions and initial stock.
+- modules/inventory/core.lua: pure grid, stacking, weight and resize operations.
+- modules/inventory/server.lua: authoritative actions, sessions, transactions and admin commands.
+- modules/inventory/client.lua: focus, requests and local cache.
+- web/src: readable React UI source. Run `npm install` then `npm run build` in web after UI edits; FiveM loads web/app.js.
 
-Run `lua tests/run.lua` from the resource root. Automated tests exercise the model and real server handlers with mocked FiveM natives: placement, stacking, metadata, safe transfers/resizing, revisions, access grants, commands and exports. Lua syntax and JavaScript syntax were checked. Browser tests cover floating windows, hover, context menu, quantity dialog, edge docking/tab switching, layout persistence and close.
+Changing a template affects newly created inventories. Resize/update existing inventories using exports. Saved item footprints must remain valid when changing definitions; incompatible saved content is rejected for inspection rather than silently discarded.
 
-Actual FiveM runtime, KVP native behaviour, keybind conflicts, native ACE enforcement and multiplayer still need an in-game check. Test two players viewing one stash, denied admin commands, full-grid transfer failure, resize failure, reconnect and resource restart. No live resources were started or restarted during implementation.
+All server/client exports, container creation, settings, drops and shops are documented in [exports.md](exports.md).
 
-## Image provenance
+## Admin commands
 
-Seven PNGs copied from the supplied local qb-inventory: radio, water_bottle, sandwich, bandage, phone, id_card and driver_license. The upstream supplied license is retained as `web/images/UPSTREAM-LICENSE.txt`; original per-image authorship is not established. No qb executable code was copied.
+Use native FiveM ACE permissions: each command is registered as restricted. Assign the desired `command.inv...` permissions to your admin principal, or use an existing inherited `command` grant. TAB's regular inv command remains unrestricted.
+
+- `invhelp`: show command syntax.
+- `invadditem <player ID> <item name> [amount]`
+- `invremoveitem <inventory ID/self> <item ID> [amount]`
+- `invcreate <inventory ID> [type]`
+- `invopen [inventory ID/self]`
+- `invresize <inventory ID/self> <columns> <rows>`
+- `invmeta <inventory ID/self> <JSON object>`
+- `invitemmeta <inventory ID/self> <item ID> <JSON object>`
+- `invinspect [inventory ID/self]`
+
+For example `invadditem 1 radio 1`, then open with TAB. TAB opens your inventory plus the glovebox while seated, or a nearby unlocked trunk when standing at its rear. Vehicle targets remain available. First access creates persistent storage keyed by plate. Configure all 23 classes and model overrides in data/vehicles.lua; add custom model classes there or in data/vehicle_models.lua.
+
+Give yourself `wallet` or `backpack` with invadditem, then double-click or right-click Use. Each gets a unique persistent container. Wallets accept cards/cash; backpacks accept wallets but exclude other backpacks by default.
+
+Shops use size={x=8}; height is calculated from footprints with a minimum of two rows. Legacy shop y values are ignored.
+
+## Verification
+
+Run `lua tests/database_inventory.lua` from the resource directory for mocked SQL and FiveM checks. This covers schema fields, character ownership/isolation, metadata, rotation, shared viewer settings, transactional rollback, paid purchase refunds, temporary drops and resource reloads. The React UI is built with `npm run build`.
+
+Restart the updated tss_bridge before tss-inventory when applying this update. No database wipe is needed for these storage features.
+
+Live MySQL connectivity, framework character events, targets and multiplayer behavior should also be checked in-game after resource startup.
+
+## Player settings
+
+Use `/inventorysettings` for notification position (eight positions with live preview) and Reset windows. Save stores the notification position per character in the personal inventory settings JSON. Cancel discards preview changes. Reset immediately restores default floating positions and invalidates that character's saved docking/minimised layouts for all inventories, including closed windows; other players' layouts remain unchanged. Escape closes settings and keeps an already-open inventory available. No schema change or table wipe is needed.
+
+## Extra inventory windows
+
+Config.ExtraInventories defines additional persistent player-owned grids. backpack_slot opens with your inventory and accepts a backpack without taking space in the main grid. Use the backpack directly from that window to open its contents. Slots have independent docking settings and enforce restrictions on the server. Creation, safe resizing, disabling and runtime registration exports are listed in exports.md.
+
+The split-stack modal includes 25%, 50% and 75% buttons to the left of a compact number field. Percentages round down with a minimum of one item. Unavailable context actions are hidden, including Use when useable is explicitly false. Move quantity has been removed.
+
+## Dynamic container weight
+
+Config.DynamicContainerWeight is enabled by default. The personal inventory total includes carried container contents recursively and equipped extra-inventory items, including their contents. Moving items between personal storage, a backpack, nested wallet and equipped slots changes grid space without reducing total carried weight. Dropping/transferring a bag removes its full weight from the previous holder and adds it to the recipient.
+
+The player limit and each container's own maxWeight are enforced server-side against the complete proposed transfer, so moving contents out of a backpack at the player limit does not count them twice. GetInventoryWeight and UI totals use the same calculation. Totals are derived from saved links rather than stored in the database. Set the toggle false to restore direct-item weights. Restart the resource after changing the toggle; no schema change or wipe is required.
+
+## Quick transfers and item keys
+
+Shift + left-click moves the full item/stack between the player and the last interacted-with external inventory. Ctrl + left-click moves half a stack, rounded down. Clicking a window, title or dock tab makes it the external target; clicking the player window does not forget that target. Clicking an external item with either shortcut moves it back to the player. The server fills matching stacks before free cells and refuses the whole transfer if space, rules or weight do not permit it. Shop catalogues still require purchases.
+
+Usable items have Keybind in their context menu. Click it, then press a keyboard key; ESC cancels capture. A bound item shows Unbind key instead. Bindings are per character and item type, saved in the personal inventory settings JSON, so splitting or transferring stacks does not change the binding. One key targets one item type; rebinding replaces its previous assignment. Pressing it uses a matching carried item, including items in equipped slots or carried containers. Backpack/wallet keys open their storage.
+
+Item keys use raw keyboard state while the inventory is closed and NUI key events while open. They do not add FiveM key mappings or console binds. Held keys do not repeat and chat/focused UI/pause input is ignored. Game controls themselves are not remapped. No table wipe is needed.

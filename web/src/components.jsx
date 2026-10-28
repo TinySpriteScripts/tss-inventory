@@ -22,6 +22,10 @@ import {
   closeQuantityDialog,
   startDialogDrag,
   pressInventoryItem,
+  touchInventory,
+  getItemBinding,
+  captureItemKey,
+  unbindItemKey,
   requestItemAction,
   startWindowDrag,
   focusInventory,
@@ -30,6 +34,10 @@ import {
   toggleMinimised,
   closeInventoryWindow,
   resetInventoryLayout,
+  NOTIFICATION_POSITIONS,
+  setNotificationPosition,
+  closeInventorySettings,
+  saveInventorySettings,
 } from "./inventoryStore.js";
 
 function ItemImage({
@@ -40,7 +48,7 @@ function ItemImage({
   const [hasImageError, setHasImageError] = useState(false);
   const imageName = item.definition.image;
   const imageIsAvailable =
-    imageName && /^[\w.-]+\.png$/i.test(imageName) && !hasImageError;
+    imageName && /^[\w.-]+\.(png|svg)$/i.test(imageName) && !hasImageError;
 
   if (!imageIsAvailable)
     return (
@@ -106,11 +114,12 @@ function InventoryItem({ inventory, item }) {
       }
       onMouseEnter={(pointerEvent) => scheduleItemTooltip(item, pointerEvent)}
       onMouseLeave={hideItemTooltip}
-      onDoubleClick={() =>
-        isShop
+      onDoubleClick={(pointerEvent) => {
+        if (pointerEvent.ctrlKey || pointerEvent.shiftKey) return;
+        return isShop
           ? openQuantityDialog(inventory, item, true)
-          : requestItemAction(inventory, item, "use")
-      }
+          : requestItemAction(inventory, item, "use");
+      }}
     >
       <ItemImage item={item} />
       <span className="amount">
@@ -311,6 +320,7 @@ function InventoryWindow({
   return (
     <section
       className={`window${isDocked ? " docked" : layout.minimised ? " minimised" : ""}`}
+      onPointerDownCapture={() => touchInventory(inventory)}
       data-dock={dockSlotId || undefined}
       data-inventory={isDocked ? undefined : inventory.id}
       style={windowStyle}
@@ -425,16 +435,12 @@ function ItemTooltip() {
   if (!tooltip) return <div id="tooltip" hidden />;
   const item = tooltip.item;
   const definition = item.definition;
-  const size = getItemFootprint(item);
 
   return (
     <ClampedPopup popupId="tooltip" position={tooltip}>
       <h3>{definition.label || item.name}</h3>
       <p>{definition.description || definition.category}</p>
       <DetailRow label="Weight" value={`${definition.weight / 1000} kg each`} />
-      <DetailRow label="Size" value={`${size.x} × ${size.y}`} />
-      <DetailRow label="Quantity" value={item.amount} />
-      <DetailRow label="Item ID" value={item.id} />
       {item.price !== undefined && (
         <>
           <DetailRow label="Price" value={`$${item.price} each`} />
@@ -468,34 +474,44 @@ function ItemContextMenu() {
   const contextMenu = inventoryState.contextMenu;
   if (!contextMenu) return <div id="context" hidden />;
   const { inventory, item } = contextMenu;
-
+  const binding = getItemBinding(item.name);
+  const isCapturing =
+    inventoryState.keybindCapture?.inventoryId === inventory.id &&
+    inventoryState.keybindCapture?.itemId === item.id;
+  const canDrop =
+    (inventory.type === "player" && inventory.isOwn !== false) ||
+    inventory.isPlayerExtra === true;
   return (
     <ClampedPopup popupId="context" position={contextMenu}>
       {inventory.type === "shop" ? (
-        <button
-          disabled={item.stock === 0}
-          onClick={() => openQuantityDialog(inventory, item, true)}
-        >
-          Buy amount…
-        </button>
+        item.stock !== 0 && (
+          <button onClick={() => openQuantityDialog(inventory, item, true)}>
+            Buy amount…
+          </button>
+        )
       ) : (
         <>
-          <button
-            disabled={!item.definition.useable}
-            onClick={() => requestItemAction(inventory, item, "use")}
-          >
-            Use
-          </button>
-          <button
-            disabled={item.amount < 2}
-            onClick={() => openQuantityDialog(inventory, item)}
-          >
-            Split stack
-          </button>
-          <button onClick={() => openQuantityDialog(inventory, item)}>
-            Move quantity…
-          </button>
-          {inventory.type === "player" && inventory.isOwn !== false && (
+          {item.definition.useable !== false && (
+            <button onClick={() => requestItemAction(inventory, item, "use")}>
+              Use
+            </button>
+          )}
+          {(binding || item.definition.useable !== false) &&
+            (binding ? (
+              <button onClick={() => unbindItemKey(inventory, item)}>
+                Unbind key ({binding.keyLabel})
+              </button>
+            ) : (
+              <button onClick={() => captureItemKey(inventory, item)}>
+                {isCapturing ? "Press a key…" : "Keybind"}
+              </button>
+            ))}
+          {item.amount > 1 && (
+            <button onClick={() => openQuantityDialog(inventory, item)}>
+              Split stack
+            </button>
+          )}
+          {canDrop && (
             <>
               <button
                 onClick={() =>
@@ -506,14 +522,15 @@ function ItemContextMenu() {
               >
                 Drop
               </button>
-              <button
-                disabled={item.amount < 2}
-                onClick={() =>
-                  openQuantityDialog(inventory, item, false, "drop")
-                }
-              >
-                Drop amount…
-              </button>
+              {item.amount > 1 && (
+                <button
+                  onClick={() =>
+                    openQuantityDialog(inventory, item, false, "drop")
+                  }
+                >
+                  Drop amount…
+                </button>
+              )}
             </>
           )}
         </>
@@ -571,19 +588,55 @@ function QuantityDialog() {
           {isPurchase ? "Buy " : isDrop ? "Drop " : ""}
           {item.definition.label}
         </h3>
-        <input
-          ref={quantityReference}
-          type="number"
-          min={1}
-          max={maximum}
-          value={dialog.quantity}
-          aria-label={
-            isPurchase ? "Buy quantity" : isDrop ? "Drop quantity" : "Quantity"
+        <div
+          className={
+            !isPurchase && !isDrop
+              ? "quantity-entry split-quantity"
+              : "quantity-entry"
           }
-          onChange={(changeEvent) =>
-            updateDialogQuantity(changeEvent.target.value)
-          }
-        />
+        >
+          {!isPurchase && !isDrop && (
+            <div className="split-presets" aria-label="Quick split">
+              {[25, 50, 75].map((percentage) => (
+                <button
+                  key={percentage}
+                  onClick={() =>
+                    updateDialogQuantity(
+                      String(
+                        Math.max(
+                          1,
+                          Math.min(
+                            item.amount - 1,
+                            Math.floor((item.amount * percentage) / 100),
+                          ),
+                        ),
+                      ),
+                    )
+                  }
+                >
+                  {percentage}%
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            ref={quantityReference}
+            type="number"
+            min={1}
+            max={maximum}
+            value={dialog.quantity}
+            aria-label={
+              isPurchase
+                ? "Buy quantity"
+                : isDrop
+                  ? "Drop quantity"
+                  : "Quantity"
+            }
+            onChange={(changeEvent) =>
+              updateDialogQuantity(changeEvent.target.value)
+            }
+          />
+        </div>
         {isPurchase && (
           <div className="purchase-total">Total: ${totalPrice}</div>
         )}
@@ -650,6 +703,128 @@ function DockingSlots() {
   );
 }
 
+function InventorySettings() {
+  const positionSelect = useRef(null);
+  useLayoutEffect(() => {
+    if (inventoryState.settingsOpen) positionSelect.current?.focus();
+  }, [inventoryState.settingsOpen]);
+  if (!inventoryState.settingsOpen) return null;
+  return (
+    <div className="settings-overlay">
+      <section
+        id="inventory-settings"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+      >
+        <header>
+          <strong id="settings-title">Inventory settings</strong>
+          <button
+            aria-label="Close settings"
+            disabled={inventoryState.settingsSaving}
+            onClick={closeInventorySettings}
+          >
+            �
+          </button>
+        </header>
+        <div className="settings-content">
+          <label htmlFor="notification-position">Notification position</label>
+          <select
+            id="notification-position"
+            ref={positionSelect}
+            value={inventoryState.settingsDraft.notificationPosition}
+            disabled={inventoryState.settingsSaving}
+            onChange={(event) => setNotificationPosition(event.target.value)}
+          >
+            {NOTIFICATION_POSITIONS.map((position) => (
+              <option key={position.value} value={position.value}>
+                {position.label}
+              </option>
+            ))}
+          </select>
+          <p>A preview appears at the selected position.</p>
+          <div className="settings-reset">
+            <span>Restore default window positions.</span>
+            <button
+              disabled={inventoryState.settingsSaving}
+              onClick={resetInventoryLayout}
+            >
+              Reset windows
+            </button>
+          </div>
+          <div className="settings-actions">
+            <button
+              disabled={inventoryState.settingsSaving}
+              onClick={closeInventorySettings}
+            >
+              Cancel
+            </button>
+            <button
+              className="confirm"
+              disabled={inventoryState.settingsSaving}
+              onClick={saveInventorySettings}
+            >
+              {inventoryState.settingsSaving ? "Saving�" : "Save"}
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ItemBoxNotifications() {
+  const position =
+    (inventoryState.settingsOpen
+      ? inventoryState.settingsDraft
+      : inventoryState.playerSettings
+    ).notificationPosition || "middle-right";
+  const [vertical, horizontal] = position.split("-");
+  const style = {
+    top: vertical === "top" ? 24 : vertical === "middle" ? "50%" : "auto",
+    bottom: vertical === "bottom" ? 24 : "auto",
+    left: horizontal === "left" ? 24 : horizontal === "center" ? "50%" : "auto",
+    right: horizontal === "right" ? 24 : "auto",
+    transform: `translate(${horizontal === "center" ? "-50%" : "0"}, ${vertical === "middle" ? "-50%" : "0"})`,
+  };
+  const notifications = inventoryState.settingsOpen
+    ? [
+        {
+          id: "preview",
+          definition: {
+            name: "bandage",
+            label: "Bandage",
+            image: "bandage.png",
+            size: { x: 1, y: 1 },
+          },
+          action: "added",
+        },
+      ]
+    : inventoryState.itemBoxes;
+  return (
+    <aside
+      className="item-box-notifications"
+      data-position={position}
+      style={style}
+      aria-live="polite"
+    >
+      {notifications.map((notification) => (
+        <div className="item-box-notification" key={notification.id}>
+          <div className="item-box-image">
+            <ItemImage
+              item={{
+                name: notification.definition.name,
+                definition: notification.definition,
+              }}
+            />
+          </div>
+          <span>{notification.action === "added" ? "Added" : "Removed"}</span>
+        </div>
+      ))}
+    </aside>
+  );
+}
+
 export function InventoryApp() {
   useSyncExternalStore(subscribeToInventory, getStoreVersion);
 
@@ -676,6 +851,8 @@ export function InventoryApp() {
       {createPortal(
         <>
           <DragGhost />
+          <InventorySettings />
+          <ItemBoxNotifications />
           <div id="toast" hidden={!inventoryState.notice}>
             {inventoryState.notice}
           </div>

@@ -14,11 +14,16 @@ const subscribers = new Set();
 let storeVersion = 0;
 let hoverTimeout = null;
 let noticeTimeout = null;
+let nextItemBoxId = 0;
 let dragAnimationFrame = null;
 let pressedItem = null;
 let windowDrag = null;
 let dialogDrag = null;
 let lastDialogPosition = null;
+let layoutSavePromise = Promise.resolve();
+let layoutSaveVersion = 0;
+let currentPlayerInventoryId = null;
+const pendingLayoutIds = new Set();
 
 export const inventoryState = {
   isOpen: false,
@@ -41,6 +46,14 @@ export const inventoryState = {
   contextMenu: null,
   dialog: null,
   notice: null,
+  itemBoxes: [],
+  playerSettings: { notificationPosition: "middle-right" },
+  settingsOpen: false,
+  settingsDraft: { notificationPosition: "middle-right" },
+  settingsSaving: false,
+  lastTouchedInventoryId: null,
+  keybindCapture: null,
+  itemKeybinds: {},
 };
 
 try {
@@ -81,7 +94,40 @@ function publishChanges() {
   subscribers.forEach((callback) => callback());
 }
 
+function persistServerLayouts() {
+  if (isBrowserPreview) return;
+  const layouts = {};
+  for (const inventory of inventoryState.inventories) {
+    if (inventory.type === "drop" || inventory.id.startsWith("drop:")) continue;
+    const layout = inventoryState.layouts[inventory.id];
+    if (!layout) continue;
+    layouts[inventory.id] = {
+      x: Math.round(Math.max(0, Math.min(16384, layout.x))),
+      y: Math.round(Math.max(0, Math.min(16384, layout.y))),
+      dock: layout.dock || false,
+      minimised: Boolean(layout.minimised),
+      active: Boolean(
+        layout.dock && inventoryState.activeTabs[layout.dock] === inventory.id,
+      ),
+    };
+    pendingLayoutIds.add(inventory.id);
+  }
+  if (!Object.keys(layouts).length) return;
+  const saveVersion = ++layoutSaveVersion;
+  layoutSavePromise = layoutSavePromise.then(async () => {
+    const response = await sendNuiRequest("action", {
+      kind: "layout",
+      layouts,
+    });
+    if (saveVersion === layoutSaveVersion) pendingLayoutIds.clear();
+    if (!response.ok)
+      showNotice(response.message || "Window layout could not be saved");
+  });
+  return layoutSavePromise;
+}
+
 function saveLayout() {
+  void persistServerLayouts();
   try {
     const persistentLayouts = Object.fromEntries(
       Object.entries(inventoryState.layouts).filter(
@@ -130,15 +176,22 @@ export function selectPaymentMethod(shop, paymentMethod) {
 
 export function getInventoryLayout(inventory, inventoryIndex = 0) {
   if (!inventoryState.layouts[inventory.id]) {
+    const windowWidth = Math.min(
+      Math.max(220, inventory.size.x * inventoryState.cellSize + 16),
+      innerWidth - 24,
+    );
+    const windowHeight = Math.min(
+      inventory.size.y * inventoryState.cellSize + 60,
+      innerHeight - 32,
+    );
+    const defaultX =
+      inventory.type === "shop"
+        ? innerWidth - windowWidth - 60
+        : 60 + inventoryIndex * 350;
+    const defaultY = 90 + inventoryIndex * 45;
     inventoryState.layouts[inventory.id] = {
-      x:
-        inventory.type === "shop"
-          ? Math.max(
-              60,
-              innerWidth - inventory.size.x * inventoryState.cellSize - 76,
-            )
-          : 60 + inventoryIndex * 350,
-      y: 90 + inventoryIndex * 45,
+      x: Math.max(12, Math.min(defaultX, innerWidth - windowWidth - 12)),
+      y: Math.max(12, Math.min(defaultY, innerHeight - windowHeight - 12)),
       dock: null,
       minimised: false,
       frontOrder: ++inventoryState.frontOrder,
@@ -206,6 +259,7 @@ async function sendNuiRequest(route, payload = {}) {
 }
 
 function clearPopups() {
+  inventoryState.keybindCapture = null;
   clearTimeout(hoverTimeout);
   inventoryState.tooltip = null;
   inventoryState.contextMenu = null;
@@ -261,6 +315,7 @@ export function hideItemTooltip() {
 export function openItemContextMenu(inventory, item, pointerEvent) {
   pointerEvent.preventDefault();
   pointerEvent.stopPropagation();
+  touchInventory(inventory);
   cancelItemDrag(false);
   clearPopups();
   inventoryState.contextMenu = {
@@ -363,6 +418,49 @@ export function confirmQuantityDialog() {
   });
 }
 
+export function touchInventory(inventory) {
+  if (!(inventory.type === "player" && inventory.isOwn !== false))
+    inventoryState.lastTouchedInventoryId = inventory.id;
+}
+
+export function getItemBinding(itemName) {
+  return Object.entries(inventoryState.itemKeybinds).find(
+    ([, binding]) => binding.itemName === itemName,
+  )?.[1];
+}
+
+export function captureItemKey(inventory, item) {
+  inventoryState.keybindCapture = {
+    inventoryId: inventory.id,
+    itemId: item.id,
+  };
+  publishChanges();
+}
+
+export function unbindItemKey(inventory, item) {
+  return requestItemAction(inventory, item, "unbindKey");
+}
+
+async function quickTransferItem(inventory, item, half) {
+  const ownInventory = inventoryState.inventories.find(
+    (candidate) => candidate.type === "player" && candidate.isOwn !== false,
+  );
+  const destination =
+    inventory.id === ownInventory?.id
+      ? findInventory(inventoryState.lastTouchedInventoryId)
+      : ownInventory;
+  if (!destination || destination.id === inventory.id)
+    return showNotice("Click the destination inventory first");
+  if (half && item.amount < 2) return showNotice("Stack cannot be split");
+  if (destination.type === "shop" || inventory.type === "shop")
+    return showNotice("Shop items must be purchased");
+  await requestItemAction(inventory, item, "quickMove", {
+    to: destination.id,
+    targetRevision: destination.revision,
+    half,
+  });
+}
+
 export function pressInventoryItem(inventory, item, pointerEvent) {
   if (
     pointerEvent.button !== 0 ||
@@ -371,6 +469,12 @@ export function pressInventoryItem(inventory, item, pointerEvent) {
   )
     return;
   pointerEvent.preventDefault();
+  if (pointerEvent.ctrlKey || pointerEvent.shiftKey) {
+    pointerEvent.stopPropagation();
+    pressedItem = null;
+    void quickTransferItem(inventory, item, pointerEvent.ctrlKey);
+    return;
+  }
   const itemBounds = pointerEvent.currentTarget.getBoundingClientRect();
   inventoryState.pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
   pressedItem = {
@@ -470,6 +574,7 @@ function calculateDestination() {
     return result(false, "Item not allowed");
   if (
     inventory.id !== drag.inventoryId &&
+    !inventory.dynamicContainerWeight &&
     inventory.maxWeight != null &&
     (inventory.weight || 0) + item.definition.weight * drag.quantity >
       inventory.maxWeight
@@ -602,8 +707,8 @@ function finishItemDrag() {
       !pointerElement.closest(".window, #dialog, #context, footer");
     if (
       isWorldBackground &&
-      sourceInventory.type === "player" &&
-      sourceInventory.isOwn !== false
+      ((sourceInventory.type === "player" && sourceInventory.isOwn !== false) ||
+        sourceInventory.isPlayerExtra === true)
     ) {
       requestItemAction(sourceInventory, item, "drop", {
         amount: drag.quantity,
@@ -650,6 +755,7 @@ export function startWindowDrag(inventory, pointerEvent) {
 }
 
 export function focusInventory(inventory) {
+  touchInventory(inventory);
   getInventoryLayout(inventory).frontOrder = ++inventoryState.frontOrder;
   publishChanges();
 }
@@ -666,6 +772,8 @@ export function undockInventory(inventory) {
 }
 
 export function selectInventoryTab(dockSlotId, inventoryId) {
+  const inventory = findInventory(inventoryId);
+  if (inventory) touchInventory(inventory);
   inventoryState.activeTabs[dockSlotId] = inventoryId;
   saveLayout();
   publishChanges();
@@ -678,15 +786,81 @@ export function toggleMinimised(inventory) {
   publishChanges();
 }
 
-export function resetInventoryLayout() {
+export const NOTIFICATION_POSITIONS = [
+  { value: "top-left", label: "Top left" },
+  { value: "top-center", label: "Top centre" },
+  { value: "top-right", label: "Top right" },
+  { value: "middle-left", label: "Middle left" },
+  { value: "middle-right", label: "Middle right" },
+  { value: "bottom-left", label: "Bottom left" },
+  { value: "bottom-center", label: "Bottom centre" },
+  { value: "bottom-right", label: "Bottom right" },
+];
+
+export function setNotificationPosition(position) {
+  if (!NOTIFICATION_POSITIONS.some((option) => option.value === position))
+    return;
+  inventoryState.settingsDraft.notificationPosition = position;
+  publishChanges();
+}
+
+export async function closeInventorySettings() {
+  if (inventoryState.settingsSaving) return;
+  inventoryState.settingsOpen = false;
+  publishChanges();
+  await sendNuiRequest("settingsClosed", {
+    inventoryOpen: inventoryState.isOpen,
+  });
+}
+
+export async function saveInventorySettings() {
+  if (inventoryState.settingsSaving) return;
+  inventoryState.settingsSaving = true;
+  publishChanges();
+  const response = await sendNuiRequest("action", {
+    kind: "preferences",
+    settings: inventoryState.settingsDraft,
+  });
+  inventoryState.settingsSaving = false;
+  if (!response.ok) {
+    showNotice(response.message || "Settings could not be saved");
+    return;
+  }
+  inventoryState.playerSettings = {
+    ...inventoryState.playerSettings,
+    ...inventoryState.settingsDraft,
+  };
+  await closeInventorySettings();
+}
+
+export async function resetInventoryLayout() {
+  await layoutSavePromise;
+  const response = await sendNuiRequest("action", { kind: "resetWindows" });
+  if (!response.ok)
+    showNotice(response.message || "Window positions could not be reset");
+  else showNotice("Window positions reset");
+}
+
+function applyWindowReset() {
   inventoryState.layouts = {};
   inventoryState.activeTabs = {};
+  pendingLayoutIds.clear();
+  layoutSaveVersion += 1;
+  windowDrag = null;
+  inventoryState.isDockKeyHeld = false;
+  inventoryState.areDockSlotsVisible = false;
+  inventoryState.dockTarget = null;
+  try {
+    localStorage.removeItem("tss-layout-v1");
+  } catch {
+    /* Server settings remain authoritative. */
+  }
   inventoryState.inventories.forEach(getInventoryLayout);
-  saveLayout();
   publishChanges();
 }
 
 export async function closeInventoryWindow(inventory) {
+  await layoutSavePromise;
   inventoryState.inventories = inventoryState.inventories.filter(
     (candidate) => candidate.id !== inventory.id,
   );
@@ -696,6 +870,7 @@ export async function closeInventoryWindow(inventory) {
 }
 
 export async function closeInventoryUi() {
+  await layoutSavePromise;
   inventoryState.isOpen = false;
   inventoryState.dialog = null;
   clearPopups();
@@ -822,7 +997,61 @@ function handlePointerUp(pointerEvent) {
 }
 
 function handleKeyDown(keyboardEvent) {
+  if (inventoryState.keybindCapture) {
+    keyboardEvent.preventDefault();
+    keyboardEvent.stopImmediatePropagation();
+    if (keyboardEvent.repeat) return;
+    if (keyboardEvent.key === "Escape") {
+      inventoryState.keybindCapture = null;
+      publishChanges();
+      return;
+    }
+    const capture = inventoryState.keybindCapture;
+    const inventory = findInventory(capture.inventoryId);
+    const item = inventory?.items.find(
+      (candidate) => candidate.id === capture.itemId,
+    );
+    if (inventory && item)
+      void requestItemAction(inventory, item, "bindKey", {
+        keyCode: keyboardEvent.keyCode,
+        keyLabel: keyboardEvent.key === " " ? "Space" : keyboardEvent.key,
+      });
+    return;
+  }
+  if (inventoryState.settingsOpen) {
+    if (keyboardEvent.key === "Escape") {
+      keyboardEvent.preventDefault();
+      void closeInventorySettings();
+    } else if (keyboardEvent.key === "Tab") {
+      keyboardEvent.preventDefault();
+      const controls = Array.from(
+        document.querySelectorAll(
+          "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled)",
+        ),
+      );
+      const focusedIndex = controls.indexOf(document.activeElement);
+      const direction = keyboardEvent.shiftKey ? -1 : 1;
+      controls[
+        (focusedIndex + direction + controls.length) % controls.length
+      ]?.focus();
+    }
+    return;
+  }
   if (!inventoryState.isOpen) return;
+  if (
+    !keyboardEvent.repeat &&
+    keyboardEvent.key !== "Escape" &&
+    !inventoryState.dialog &&
+    !inventoryState.drag &&
+    !windowDrag &&
+    !["INPUT", "TEXTAREA", "SELECT"].includes(keyboardEvent.target.tagName) &&
+    !keyboardEvent.target.isContentEditable &&
+    inventoryState.itemKeybinds[String(keyboardEvent.keyCode)]
+  ) {
+    keyboardEvent.preventDefault();
+    void sendNuiRequest("useItemKey", { keyCode: keyboardEvent.keyCode });
+    return;
+  }
   if (
     keyboardEvent.code === "KeyD" &&
     !inventoryState.dialog &&
@@ -889,7 +1118,60 @@ function handleKeyUp(keyboardEvent) {
 function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
-  if (message.type === "sync") {
+  if (message.type === "itemKeybinds") {
+    inventoryState.itemKeybinds = message.bindings || {};
+    publishChanges();
+  } else if (message.type === "openSettings") {
+    inventoryState.playerSettings = {
+      notificationPosition: "middle-right",
+      ...message.settings,
+    };
+    inventoryState.settingsDraft = { ...inventoryState.playerSettings };
+    inventoryState.settingsOpen = true;
+    clearPopups();
+    cancelItemDrag(false);
+    publishChanges();
+  } else if (message.type === "preferences") {
+    inventoryState.playerSettings = {
+      notificationPosition: "middle-right",
+      ...message.settings,
+    };
+    publishChanges();
+  } else if (message.type === "resetLayouts") {
+    applyWindowReset();
+  } else if (message.type === "itemBox") {
+    if (!message.definition || !["added", "removed"].includes(message.action))
+      return;
+    const notificationId = ++nextItemBoxId;
+    inventoryState.itemBoxes = [
+      ...inventoryState.itemBoxes.slice(-2),
+      {
+        id: notificationId,
+        definition: message.definition,
+        action: message.action,
+        amount: message.amount || 1,
+      },
+    ];
+    publishChanges();
+    setTimeout(() => {
+      inventoryState.itemBoxes = inventoryState.itemBoxes.filter(
+        (notification) => notification.id !== notificationId,
+      );
+      publishChanges();
+    }, 2500);
+  } else if (message.type === "sync") {
+    const ownInventory = message.inventories?.find(
+      (inventory) => inventory.isOwn === true,
+    );
+    if (ownInventory && currentPlayerInventoryId !== ownInventory.id) {
+      currentPlayerInventoryId = ownInventory.id;
+      inventoryState.layouts = {};
+      inventoryState.activeTabs = {};
+      inventoryState.lastTouchedInventoryId = null;
+      inventoryState.itemKeybinds = {};
+      pendingLayoutIds.clear();
+      layoutSaveVersion += 1;
+    }
     cancelItemDrag(false);
     const incomingInventoryIds = new Set(
       (message.inventories || []).map((inventory) => inventory.id),
@@ -908,6 +1190,37 @@ function handleServerMessage(messageEvent) {
         }
       }
     }
+    for (const inventory of message.inventories || []) {
+      if (
+        inventory.layoutSettings === undefined ||
+        pendingLayoutIds.has(inventory.id) ||
+        windowDrag?.inventoryId === inventory.id
+      )
+        continue;
+      if (inventory.layoutSettings === false)
+        delete inventoryState.layouts[inventory.id];
+      else
+        inventoryState.layouts[inventory.id] = {
+          ...inventory.layoutSettings,
+          dock: inventory.layoutSettings.dock || null,
+          frontOrder:
+            inventoryState.layouts[inventory.id]?.frontOrder ||
+            ++inventoryState.frontOrder,
+        };
+    }
+    for (const inventory of message.inventories || []) {
+      if (
+        inventory.layoutSettings?.active &&
+        inventory.layoutSettings.dock &&
+        !pendingLayoutIds.has(inventory.id)
+      ) {
+        inventoryState.activeTabs[inventory.layoutSettings.dock] = inventory.id;
+      }
+    }
+    if (ownInventory?.itemKeybinds)
+      inventoryState.itemKeybinds = ownInventory.itemKeybinds;
+    if (ownInventory?.playerSettings)
+      inventoryState.playerSettings = { ...ownInventory.playerSettings };
     inventoryState.inventories = message.inventories || [];
     inventoryState.visibleMetadata = message.visibleMetadata || {};
     inventoryState.cellSize = message.cellSize || 48;
@@ -918,10 +1231,22 @@ function handleServerMessage(messageEvent) {
       !findInventory(inventoryState.dialog.inventoryId)
     )
       inventoryState.dialog = null;
-    clearPopups();
+    const capture = inventoryState.keybindCapture;
+    const capturedInventory = capture && findInventory(capture.inventoryId);
+    const capturedItem = capturedInventory?.items.find(
+      (item) => item.id === capture.itemId,
+    );
+    if (capture && capturedItem && inventoryState.contextMenu) {
+      inventoryState.contextMenu = {
+        ...inventoryState.contextMenu,
+        inventory: capturedInventory,
+        item: capturedItem,
+      };
+    } else clearPopups();
     publishChanges();
   } else if (message.type === "close") {
     inventoryState.isOpen = false;
+    inventoryState.settingsOpen = false;
     inventoryState.dialog = null;
     windowDrag = null;
     inventoryState.isDockKeyHeld = false;
@@ -953,6 +1278,7 @@ export function initialiseInventoryUi() {
       inventoryState.contextMenu
     ) {
       inventoryState.contextMenu = null;
+      inventoryState.keybindCapture = null;
       publishChanges();
     }
   });

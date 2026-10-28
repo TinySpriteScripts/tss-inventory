@@ -6,7 +6,7 @@ TSSContainers = TSSContainers or {
         size = {x=8,y=8},
         -- use only whitelist or blacklist. do not use both
         whitelist = {}, -- only certain items allowed in ,all others not allowed
-        blacklist = {}, -- allow all items apart from those in this list
+        blacklist = { 'backpack' }, -- wallets can go inside; backpacks cannot
         metadata = {}, -- metadata can be applied to inventories themselves to store extra data
     },
     wallet = {

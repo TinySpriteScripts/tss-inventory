@@ -5,7 +5,7 @@ TSSShops = TSSShops or {
         distance = 3.0,
         account = 'cash', -- bridge player money account, not the cash inventory item
         pedModel = 'ig_bankman', --if supplied then spawn a ped at location and use target entity else use a circle zone
-        size = {x = 8, y = 30},
+        size = { x = 8 }, -- rows are calculated automatically; minimum 2,
         stock = {
             plastic = {price = 5, amount = 100}, -- price is how much you pay, amount is how much vendor has at start (false for unlimited)
             water_bottle = {price = 10, amount = false},
