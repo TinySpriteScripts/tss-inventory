@@ -49,7 +49,7 @@ All server/client exports, container creation, settings, drops and shops are doc
 Admin commands use FiveM ACE permissions through tss_bridge. An existing `command` grant allows all commands, or grant individual permissions such as `command.additem`. Command descriptions and arguments appear in tss-chat for authorised admins. TAB and `/inv` remain available to everyone. Inventory arguments accept an inventory ID, an online player ID, or `self`.
 
 - `inventoryhelp`: show command syntax.
-- `additem <player ID> <item name> [amount]`
+- `giveitem <player ID> <item name> [amount] [JSON metadata]` (also available as `additem`)
 - `removeitem <inventory ID/self> <item ID> [amount]`
 - `createinventory <inventory ID> [type]`
 - `openinventory [inventory ID/self]`
@@ -121,3 +121,21 @@ Cash has zero weight and a large stack limit while syncing is enabled. If an ext
 ## Close inventory on item use
 
 Items inherit `shouldClose = true` from `Config.ItemDefaults`. Using a registered usable item closes an open inventory before its handler runs, including context-menu use, double-click, item keys and the `UseItem` export. Set `shouldClose = false` on an item definition to keep the inventory open. The example wallet and backpack use `false` so opening their storage keeps the inventory visible.
+
+## Item rarity and give-item metadata
+
+`Config.Rarity.enable` controls rarity frames. Each entry in `Config.Rarity.tiers` is a six-digit hex colour. Items with `metadata.rarity` matching a configured tier display that frame around their occupied slots. Missing or unknown rarity values display no frame. Item images stay unchanged.
+
+Give player 1 a rare backpack:
+
+```text
+/giveitem 1 backpack 1 {"rarity":"rare"}
+```
+
+Give it a custom item label and additional metadata:
+
+```text
+/giveitem 1 backpack 1 {"rarity":"legendary","label":"Jack's Backpack","ownerName":"Jack"}
+```
+
+Replace `1` with the player's server ID. Specify the amount before JSON metadata. `/additem` accepts the same arguments. Both names use the bridge command metadata and accept either the `command.giveitem` or `command.additem` ACE permission.

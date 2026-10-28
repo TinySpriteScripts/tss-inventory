@@ -30,6 +30,7 @@ export const inventoryState = {
   isOpen: false,
   inventories: [],
   visibleMetadata: {},
+  rarity: { enable: false, tiers: {} },
   layouts: {},
   activeTabs: {},
   paymentMethods: {},
@@ -1266,6 +1267,7 @@ function handleServerMessage(messageEvent) {
       inventoryState.playerSettings = { ...ownInventory.playerSettings };
     inventoryState.inventories = message.inventories || [];
     inventoryState.visibleMetadata = message.visibleMetadata || {};
+    inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
     inventoryState.cellSize = message.cellSize || 48;
     inventoryState.isOpen = true;
     inventoryState.inventories.forEach(getInventoryLayout);

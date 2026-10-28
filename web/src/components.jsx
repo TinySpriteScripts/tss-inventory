@@ -78,6 +78,36 @@ function ItemImage({
   );
 }
 
+function getItemRarityColor(item) {
+  const raritySettings = inventoryState.rarity;
+  const rarity = item.metadata?.rarity;
+  const color = typeof rarity === "string" && raritySettings.tiers?.[rarity];
+  return raritySettings.enable && typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)
+    ? color
+    : null;
+}
+
+function RarityFrame({ item }) {
+  const rarity = item.metadata?.rarity;
+  const color = getItemRarityColor(item);
+  if (!color) return null;
+
+  const red = parseInt(color.slice(1, 3), 16);
+  const green = parseInt(color.slice(3, 5), 16);
+  const blue = parseInt(color.slice(5, 7), 16);
+  return (
+    <div className="rarity-frame" data-rarity={rarity} style={{
+      "--rarity-color": color,
+      "--rarity-tint": `rgba(${red}, ${green}, ${blue}, 0.09)`,
+    }} aria-hidden="true">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <path d="M0 9V0H9 M91 0H100V9 M100 91V100H91 M9 100H0V91"
+          vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
+
 function InventoryItem({ inventory, item }) {
   const size = getItemFootprint(item);
   const activeDrag = inventoryState.drag;
@@ -122,6 +152,7 @@ function InventoryItem({ inventory, item }) {
       }}
     >
       <ItemImage item={item} />
+      <RarityFrame item={item} />
       <span className="amount">
         {isShop ? (item.stock === false ? "∞" : item.stock) : item.amount}
       </span>
@@ -413,7 +444,7 @@ function InventoryWorkspace() {
   return <div id="workspace">{windows}</div>;
 }
 
-function ClampedPopup({ popupId, position, children }) {
+function ClampedPopup({ popupId, position, children, style }) {
   const popupReference = useRef(null);
   const [popupPosition, setPopupPosition] = useState(position);
 
@@ -432,7 +463,7 @@ function ClampedPopup({ popupId, position, children }) {
     <div
       id={popupId}
       ref={popupReference}
-      style={{ left: popupPosition.x, top: popupPosition.y }}
+      style={{ left: popupPosition.x, top: popupPosition.y, ...style }}
     >
       {children}
     </div>
@@ -455,7 +486,8 @@ function ItemTooltip() {
   const definition = item.definition;
 
   return (
-    <ClampedPopup popupId="tooltip" position={tooltip}>
+    <ClampedPopup popupId="tooltip" position={tooltip}
+      style={{ borderTopColor: getItemRarityColor(item) || undefined }}>
       <h3>{definition.label || item.name}</h3>
       <p>{definition.description || definition.category}</p>
       <DetailRow label="Weight" value={`${definition.weight / 1000} kg each`} />
@@ -692,6 +724,7 @@ function DragGhost() {
       style={ghostStyle}
     >
       <ItemImage item={item} isRotated={destination?.craft ? false : drag.isRotated} isGhost />
+      <RarityFrame item={item} />
       <span className="amount">{destination?.craft ? 1 : drag.quantity}</span>
     </div>
   );

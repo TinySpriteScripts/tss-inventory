@@ -1141,6 +1141,7 @@ local adminCommandDefinitions = {
         { name = 'player', type = 'integer', help = 'Online player ID' },
         { name = 'item', help = 'Item name, such as radio' },
         { name = 'amount', type = 'integer', optional = true, help = 'Amount to add; defaults to 1' },
+        { name = 'metadata', type = 'rest', optional = true, help = 'Optional JSON object, such as {"rarity":"rare"}; specify amount first' },
     } },
     removeitem = { description = 'Remove an item instance from an inventory.', arguments = {
         { name = 'inventory', help = 'Inventory ID, online player ID, or self' },
@@ -1173,13 +1174,16 @@ local adminCommandDefinitions = {
     } },
 }
 
+adminCommandDefinitions.additem.permission = { 'command.additem', 'command.giveitem' }
+adminCommandDefinitions.giveitem = adminCommandDefinitions.additem
+
 local function adminCommand(commandName, callback)
     local definition = adminCommandDefinitions[commandName]
     local registered, registrationError = commandBridge.Register(commandName, {
         description = definition.description,
         arguments = definition.arguments,
         category = 'Inventory admin',
-        permission = 'command.' .. commandName,
+        permission = definition.permission or ('command.' .. commandName),
         allowConsole = true,
     }, function(playerSource, parsedArguments, rawCommand, arguments)
         local succeeded, message = runOperation(callback, playerSource, arguments, rawCommand)
@@ -1198,7 +1202,7 @@ local function commandInventory(playerSource, suppliedId)
 end
 
 adminCommand('inventoryhelp', function()
-    return true, 'additem [player ID] [item] [amount]; removeitem [inventory/self] [item ID] [amount]; createinventory [ID] [type]; openinventory [ID]; resizeinventory [ID/self] [columns] [rows]; setinventorymetadata [ID/self] [JSON]; setitemmetadata [ID/self] [item ID] [JSON]; inspectinventory [ID/self]'
+    return true, 'giveitem/additem [player ID] [item] [amount] [JSON metadata]; removeitem [inventory/self] [item ID] [amount]; createinventory [ID] [type]; openinventory [ID]; resizeinventory [ID/self] [columns] [rows]; setinventorymetadata [ID/self] [JSON]; setitemmetadata [ID/self] [item ID] [JSON]; inspectinventory [ID/self]'
 end)
 local function commandItemFeedback(playerSource, inventory, itemName, itemLabel, amount, action)
     notifyItemChange(inventory.id, itemName, action, amount, true)
@@ -1215,15 +1219,29 @@ local function commandItemFeedback(playerSource, inventory, itemName, itemLabel,
     return true, ('Removed %d x %s from %s'):format(amount, itemLabel, targetName)
 end
 
-adminCommand('additem', function(playerSource, arguments)
+local function giveItemCommand(playerSource, arguments, rawCommand)
     local inventory, playerError = ensurePlayerInventory(tonumber(arguments[1]))
     if not inventory then return false, playerError end
     local itemName = arguments[2]
     local amount = tonumber(arguments[3]) or 1
-    local added, addError = mutateInventory(inventory.id, inventoryCore.add, itemName, amount, {})
+    local definition = inventoryCore.definition(itemName)
+    if not definition then return false, 'Unknown item' end
+    local metadata = inventoryCore.copy(definition.metadata)
+    local encodedMetadata = rawCommand:match('^%S+%s+%S+%s+%S+%s+%S+%s+(.+)$')
+    if encodedMetadata then
+        local decoded, decodedMetadata = pcall(json.decode, encodedMetadata)
+        if not decoded or type(decodedMetadata) ~= 'table' then return false, 'Metadata must be a valid JSON object' end
+        local metadataError
+        metadata, metadataError = cleanMetadata(decodedMetadata)
+        if not metadata then return false, metadataError end
+    end
+    local added, addError = mutateInventory(inventory.id, inventoryCore.add, itemName, amount, metadata)
     if not added then return false, addError end
-    return commandItemFeedback(playerSource, inventory, itemName, inventoryCore.definition(itemName).label, amount, 'added')
-end)
+    return commandItemFeedback(playerSource, inventory, itemName, metadata.label or definition.label, amount, 'added')
+end
+
+adminCommand('additem', giveItemCommand)
+adminCommand('giveitem', giveItemCommand)
 
 adminCommand('removeitem', function(playerSource, arguments)
     local inventoryId = commandInventory(playerSource, arguments[1])

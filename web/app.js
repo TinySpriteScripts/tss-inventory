@@ -14714,6 +14714,7 @@
     isOpen: false,
     inventories: [],
     visibleMetadata: {},
+    rarity: { enable: false, tiers: {} },
     layouts: {},
     activeTabs: {},
     paymentMethods: {},
@@ -15715,6 +15716,7 @@
         inventoryState.playerSettings = { ...ownInventory.playerSettings };
       inventoryState.inventories = message.inventories || [];
       inventoryState.visibleMetadata = message.visibleMetadata || {};
+      inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
       inventoryState.cellSize = message.cellSize || 48;
       inventoryState.isOpen = true;
       inventoryState.inventories.forEach(getInventoryLayout);
@@ -15887,6 +15889,30 @@
       }
     );
   }
+  function getItemRarityColor(item) {
+    const raritySettings = inventoryState.rarity;
+    const rarity = item.metadata?.rarity;
+    const color = typeof rarity === "string" && raritySettings.tiers?.[rarity];
+    return raritySettings.enable && typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color) ? color : null;
+  }
+  function RarityFrame({ item }) {
+    const rarity = item.metadata?.rarity;
+    const color = getItemRarityColor(item);
+    if (!color) return null;
+    const red = parseInt(color.slice(1, 3), 16);
+    const green = parseInt(color.slice(3, 5), 16);
+    const blue = parseInt(color.slice(5, 7), 16);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "rarity-frame", "data-rarity": rarity, style: {
+      "--rarity-color": color,
+      "--rarity-tint": `rgba(${red}, ${green}, ${blue}, 0.09)`
+    }, "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "path",
+      {
+        d: "M0 9V0H9 M91 0H100V9 M100 91V100H91 M9 100H0V91",
+        vectorEffect: "non-scaling-stroke"
+      }
+    ) }) });
+  }
   function InventoryItem({ inventory, item }) {
     const size = getItemFootprint(item);
     const activeDrag = inventoryState.drag;
@@ -15922,6 +15948,7 @@
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: isShop ? item.stock === false ? "\u221E" : item.stock : item.amount }),
           isShop && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price", children: [
             "$",
@@ -16198,7 +16225,7 @@
     }
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "workspace", children: windows });
   }
-  function ClampedPopup({ popupId, position, children }) {
+  function ClampedPopup({ popupId, position, children, style }) {
     const popupReference = (0, import_react.useRef)(null);
     const [popupPosition, setPopupPosition] = (0, import_react.useState)(position);
     (0, import_react.useLayoutEffect)(() => {
@@ -16216,7 +16243,7 @@
       {
         id: popupId,
         ref: popupReference,
-        style: { left: popupPosition.x, top: popupPosition.y },
+        style: { left: popupPosition.x, top: popupPosition.y, ...style },
         children
       }
     );
@@ -16232,34 +16259,42 @@
     if (!tooltip) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "tooltip", hidden: true });
     const item = tooltip.item;
     const definition = item.definition;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "tooltip", position: tooltip, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: definition.label || item.name }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: definition.description || definition.category }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
-      item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Price", value: `$${item.price} each` }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          DetailRow,
-          {
-            label: "Stock",
-            value: item.stock === false ? "Unlimited" : item.stock
-          }
-        )
-      ] }),
-      Object.entries(inventoryState.visibleMetadata).map(
-        ([metadataKey, metadataLabel]) => {
-          const metadataValue = item.metadata?.[metadataKey];
-          return metadataValue === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            DetailRow,
-            {
-              label: metadataLabel,
-              value: typeof metadataValue === "object" ? JSON.stringify(metadataValue) : metadataValue
-            },
-            metadataKey
-          );
-        }
-      )
-    ] });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      ClampedPopup,
+      {
+        popupId: "tooltip",
+        position: tooltip,
+        style: { borderTopColor: getItemRarityColor(item) || void 0 },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: definition.label || item.name }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: definition.description || definition.category }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
+          item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Price", value: `$${item.price} each` }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              DetailRow,
+              {
+                label: "Stock",
+                value: item.stock === false ? "Unlimited" : item.stock
+              }
+            )
+          ] }),
+          Object.entries(inventoryState.visibleMetadata).map(
+            ([metadataKey, metadataLabel]) => {
+              const metadataValue = item.metadata?.[metadataKey];
+              return metadataValue === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                DetailRow,
+                {
+                  label: metadataLabel,
+                  value: typeof metadataValue === "object" ? JSON.stringify(metadataValue) : metadataValue
+                },
+                metadataKey
+              );
+            }
+          )
+        ]
+      }
+    );
   }
   function ItemContextMenu() {
     const contextMenu = inventoryState.contextMenu;
@@ -16407,6 +16442,7 @@
         style: ghostStyle,
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item, isRotated: destination?.craft ? false : drag.isRotated, isGhost: true }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: destination?.craft ? 1 : drag.quantity })
         ]
       }

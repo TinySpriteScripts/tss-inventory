@@ -54,11 +54,24 @@ Config.VehicleDefaults = {
     },
 }
 
+Config.Rarity = {
+    enable = true,
+    tiers = {
+        common = '#aeb6bf',
+        uncommon = '#53bb76',
+        rare = '#51a7df',
+        epic = '#b778df',
+        legendary = '#e8bc50',
+    },
+}
+
 -- shows these metadata fields in the inventory when right click details
 Config.VisibleItemMetadata = {
     usage = "Usage", -- metadata key and then the label thats shown in its place
     durability = "Durability",
+    rarity = "Rarity",
 }
+
 Config.VehicleStorage = {
     interactionDistance = 2.5,
     serverDistance = 7.0, -- includes long vehicles; access is rechecked for every action

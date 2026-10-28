@@ -63,7 +63,7 @@ RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, ce
     if source ~= 65535 then return end
     isOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize })
+    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity })
 end)
 
 RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
