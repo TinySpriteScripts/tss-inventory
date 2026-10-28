@@ -14661,6 +14661,38 @@
     )?.id || null;
   }
 
+  // src/crafting.js
+  function planCraft(inventory, sourceItem, targetItem) {
+    if (!inventory.isOwn || inventory.type !== "player" || sourceItem.id === targetItem.id || sourceItem.name === targetItem.name || sourceItem.metadata?.containerId || targetItem.metadata?.containerId) return null;
+    for (const recipe of inventory.craftingRecipes || []) {
+      if (!recipe.input[sourceItem.name] || !recipe.input[targetItem.name] || sourceItem.amount < recipe.input[sourceItem.name] || targetItem.amount < recipe.input[targetItem.name]) continue;
+      const remainingItems = inventory.items.map((item) => ({
+        ...item,
+        amount: item.amount - (item.id === sourceItem.id ? recipe.input[sourceItem.name] : item.id === targetItem.id ? recipe.input[targetItem.name] : 0)
+      })).filter((item) => item.amount > 0);
+      const output = { name: recipe.name, amount: 1, metadata: {}, definition: recipe.definition, rotated: false };
+      const outputSize = recipe.definition.size;
+      const fits = (column, row) => column > 0 && row > 0 && column + outputSize.x - 1 <= inventory.size.x && row + outputSize.y - 1 <= inventory.size.y && remainingItems.every((obstacle) => {
+        const obstacleSize = obstacle.rotated ? { x: obstacle.definition.size.y, y: obstacle.definition.size.x } : obstacle.definition.size;
+        return column >= obstacle.x + obstacleSize.x || column + outputSize.x <= obstacle.x || row >= obstacle.y + obstacleSize.y || row + outputSize.y <= obstacle.y;
+      });
+      let position = [{ x: targetItem.x, y: targetItem.y }, { x: sourceItem.x, y: sourceItem.y }].find((candidate) => fits(candidate.x, candidate.y));
+      for (let row = 1; !position && row <= inventory.size.y; row += 1) {
+        for (let column = 1; column <= inventory.size.x; column += 1) {
+          if (fits(column, row)) {
+            position = { x: column, y: row };
+            break;
+          }
+        }
+      }
+      if (!position) continue;
+      const consumedWeight = recipe.input[sourceItem.name] * sourceItem.definition.weight + recipe.input[targetItem.name] * targetItem.definition.weight;
+      if (inventory.maxWeight != null && inventory.weight - consumedWeight + recipe.definition.weight > inventory.maxWeight) continue;
+      return { recipe: recipe.name, targetItemId: targetItem.id, item: { ...output, ...position }, duration: recipe.duration };
+    }
+    return null;
+  }
+
   // src/inventoryStore.js
   var isBrowserPreview = typeof GetParentResourceName !== "function";
   var resourceName = isBrowserPreview ? "tss-inventory" : GetParentResourceName();
@@ -14691,6 +14723,8 @@
     pointer: { x: 0, y: 0 },
     viewport: { width: innerWidth, height: innerHeight },
     drag: null,
+    crafting: null,
+    craftingPending: false,
     destination: null,
     dockTarget: null,
     isDockKeyHeld: false,
@@ -14883,8 +14917,9 @@
     inventoryState.contextMenu = null;
   }
   async function requestItemAction(inventory, item, actionKind, details = {}) {
-    if (inventoryState.isRequestPending) return;
+    if (inventoryState.isRequestPending || inventoryState.crafting || inventoryState.craftingPending) return;
     inventoryState.isRequestPending = true;
+    if (actionKind === "craft") inventoryState.craftingPending = true;
     clearPopups();
     publishChanges();
     try {
@@ -14900,6 +14935,7 @@
         showNotice(response.message);
     } finally {
       inventoryState.isRequestPending = false;
+      if (actionKind === "craft") inventoryState.craftingPending = false;
       publishChanges();
     }
   }
@@ -14921,6 +14957,10 @@
     publishChanges();
   }
   function openItemContextMenu(inventory, item, pointerEvent) {
+    if (inventoryState.crafting || inventoryState.craftingPending) {
+      pointerEvent.preventDefault();
+      return;
+    }
     pointerEvent.preventDefault();
     pointerEvent.stopPropagation();
     touchInventory(inventory);
@@ -15039,6 +15079,7 @@
     });
   }
   function pressInventoryItem(inventory, item, pointerEvent) {
+    if (inventoryState.crafting || inventoryState.craftingPending) return;
     if (pointerEvent.button !== 0 || inventoryState.drag || inventoryState.isRequestPending)
       return;
     pointerEvent.preventDefault();
@@ -15088,6 +15129,23 @@
     const gridBounds = gridElement.getBoundingClientRect();
     const column = Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) + 1 - drag.offsetX;
     const row = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1 - drag.offsetY;
+    const hoveredColumn = Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) + 1;
+    const hoveredRow = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1;
+    const hoveredItem = inventory.items.find((candidate) => {
+      const footprint = getItemFootprint(candidate);
+      return candidate.id !== item.id && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x && hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
+    });
+    const craft = inventory.id === drag.inventoryId && hoveredItem && planCraft(inventory, item, hoveredItem);
+    if (craft) return {
+      inventoryId: inventory.id,
+      column: craft.item.x,
+      row: craft.item.y,
+      isValid: true,
+      craft,
+      highlight: { x: craft.item.x, y: craft.item.y, width: craft.item.definition.size.x, height: craft.item.definition.size.y },
+      screenX: gridBounds.left + (craft.item.x - 1) * inventoryState.cellSize,
+      screenY: gridBounds.top + (craft.item.y - 1) * inventoryState.cellSize
+    };
     const size = getItemFootprint(item, drag.isRotated);
     let highlight = { x: column, y: row, width: size.x, height: size.y };
     const result = (isValid, reason = "") => ({
@@ -15203,6 +15261,13 @@
     }
     if (!destination.isValid) return showNotice(destination.reason);
     const targetInventory = findInventory(destination.inventoryId);
+    if (destination.craft) {
+      void requestItemAction(sourceInventory, item, "craft", {
+        recipe: destination.craft.recipe,
+        targetItemId: destination.craft.targetItemId
+      });
+      return;
+    }
     requestItemAction(
       sourceInventory,
       item,
@@ -15328,6 +15393,7 @@
     publishChanges();
   }
   async function closeInventoryWindow(inventory) {
+    if (inventoryState.crafting || inventoryState.craftingPending) return;
     await layoutSavePromise;
     inventoryState.inventories = inventoryState.inventories.filter(
       (candidate) => candidate.id !== inventory.id
@@ -15337,6 +15403,7 @@
     if (!inventoryState.inventories.length) closeInventoryUi();
   }
   async function closeInventoryUi() {
+    if (inventoryState.crafting || inventoryState.craftingPending) return;
     await layoutSavePromise;
     inventoryState.isOpen = false;
     inventoryState.dialog = null;
@@ -15448,6 +15515,14 @@
     publishChanges();
   }
   function handleKeyDown(keyboardEvent) {
+    if (inventoryState.crafting || inventoryState.craftingPending) {
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopImmediatePropagation();
+      if (keyboardEvent.key === "Escape" && !keyboardEvent.repeat) {
+        void sendNuiRequest("action", { kind: "cancelCraft" });
+      }
+      return;
+    }
     if (inventoryState.keybindCapture) {
       keyboardEvent.preventDefault();
       keyboardEvent.stopImmediatePropagation();
@@ -15542,7 +15617,13 @@
   function handleServerMessage(messageEvent) {
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "itemKeybinds") {
+    if (message.type === "crafting") {
+      inventoryState.crafting = message.craft || null;
+      inventoryState.craftingPending = false;
+      clearPopups();
+      cancelItemDrag(false);
+      publishChanges();
+    } else if (message.type === "itemKeybinds") {
       inventoryState.itemKeybinds = message.bindings || {};
       publishChanges();
     } else if (message.type === "openSettings") {
@@ -15674,6 +15755,12 @@
       refreshDockingPreview();
       cancelItemDrag();
     });
+    document.addEventListener("pointerdown", (pointerEvent) => {
+      if (inventoryState.crafting || inventoryState.craftingPending) {
+        pointerEvent.preventDefault();
+        pointerEvent.stopImmediatePropagation();
+      }
+    }, true);
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("keyup", handleKeyUp);
     document.addEventListener(
@@ -15870,9 +15957,37 @@
         );
       }
     }
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `placement${destination.isValid ? "" : " invalid"}`, children: cells });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `placement${destination.isValid ? "" : " invalid"}${destination.craft ? " crafting-preview" : ""}`, children: cells });
+  }
+  function CraftingItem({ craft }) {
+    const width = craft.item.definition.size.x * inventoryState.cellSize;
+    const height = craft.item.definition.size.y * inventoryState.cellSize;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "crafting-item", style: {
+      left: (craft.item.x - 1) * inventoryState.cellSize,
+      top: (craft.item.y - 1) * inventoryState.cellSize,
+      width,
+      height
+    }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item: craft.item }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { className: "crafting-progress", width, height, viewBox: `0 0 ${width} ${height}`, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { className: "crafting-track", x: "1.5", y: "1.5", width: width - 3, height: height - 3 }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "rect",
+          {
+            className: "crafting-fill",
+            x: "1.5",
+            y: "1.5",
+            width: width - 3,
+            height: height - 3,
+            pathLength: "100",
+            style: { animationDuration: `${craft.duration}ms` }
+          }
+        )
+      ] })
+    ] });
   }
   function InventoryGrid({ inventory }) {
+    const craft = inventoryState.crafting?.inventoryId === inventory.id ? inventoryState.crafting : null;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "body", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -15883,7 +15998,18 @@
           height: inventory.size.y * inventoryState.cellSize
         },
         children: [
-          inventory.items.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryItem, { inventory, item }, item.id)),
+          inventory.items.map((item) => {
+            const remainingAmount = craft?.ingredients?.[String(item.id)] ?? item.amount;
+            return remainingAmount > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              InventoryItem,
+              {
+                inventory,
+                item: remainingAmount === item.amount ? item : { ...item, amount: remainingAmount }
+              },
+              item.id
+            );
+          }),
+          craft && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CraftingItem, { craft }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlacementCells, { inventory })
         ]
       }
@@ -16264,10 +16390,10 @@
   }
   function DragGhost() {
     const drag = inventoryState.drag;
-    const item = getDraggedItem();
-    if (!drag || !item) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "drag-ghost", hidden: true });
-    const size = getItemFootprint(item, drag.isRotated);
     const destination = inventoryState.destination;
+    const item = destination?.craft?.item || getDraggedItem();
+    if (!drag || !item) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "drag-ghost", hidden: true });
+    const size = getItemFootprint(item, destination?.craft ? false : drag.isRotated);
     const ghostStyle = {
       width: size.x * inventoryState.cellSize,
       height: size.y * inventoryState.cellSize,
@@ -16277,11 +16403,11 @@
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
-        className: `drag-ghost${destination?.isValid ? "" : " invalid"}`,
+        className: `drag-ghost${destination?.isValid ? "" : " invalid"}${destination?.craft ? " crafting-ghost" : ""}`,
         style: ghostStyle,
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item, isRotated: drag.isRotated, isGhost: true }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: drag.quantity })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item, isRotated: destination?.craft ? false : drag.isRotated, isGhost: true }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: destination?.craft ? 1 : drag.quantity })
         ]
       }
     );
@@ -16445,8 +16571,8 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemContextMenu, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(QuantityDialog, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("footer", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "TAB / ESC \xB7 Close" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Drag items \xB7 Right-click for actions" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: inventoryState.crafting || inventoryState.craftingPending ? "ESC \xB7 Cancel crafting" : "TAB / ESC \xB7 Close" }),
+              !inventoryState.crafting && !inventoryState.craftingPending && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Drag items \xB7 Right-click for actions" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { id: "reset", onClick: resetInventoryLayout, children: "Reset layout" })
             ] })
           ]

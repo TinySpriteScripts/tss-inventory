@@ -165,13 +165,28 @@ function PlacementCells({ inventory }) {
   }
 
   return (
-    <div className={`placement${destination.isValid ? "" : " invalid"}`}>
+    <div className={`placement${destination.isValid ? "" : " invalid"}${destination.craft ? " crafting-preview" : ""}`}>
       {cells}
     </div>
   );
 }
 
+function CraftingItem({ craft }) {
+  const width = craft.item.definition.size.x * inventoryState.cellSize;
+  const height = craft.item.definition.size.y * inventoryState.cellSize;
+  return <div className="crafting-item" style={{ left: (craft.item.x - 1) * inventoryState.cellSize,
+    top: (craft.item.y - 1) * inventoryState.cellSize, width, height }}>
+    <ItemImage item={craft.item} />
+    <svg className="crafting-progress" width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <rect className="crafting-track" x="1.5" y="1.5" width={width - 3} height={height - 3} />
+      <rect className="crafting-fill" x="1.5" y="1.5" width={width - 3} height={height - 3}
+        pathLength="100" style={{ animationDuration: `${craft.duration}ms` }} />
+    </svg>
+  </div>;
+}
+
 function InventoryGrid({ inventory }) {
+  const craft = inventoryState.crafting?.inventoryId === inventory.id ? inventoryState.crafting : null;
   return (
     <div className="body">
       <div
@@ -182,9 +197,12 @@ function InventoryGrid({ inventory }) {
           height: inventory.size.y * inventoryState.cellSize,
         }}
       >
-        {inventory.items.map((item) => (
-          <InventoryItem key={item.id} inventory={inventory} item={item} />
-        ))}
+        {inventory.items.map((item) => {
+          const remainingAmount = craft?.ingredients?.[String(item.id)] ?? item.amount;
+          return remainingAmount > 0 && <InventoryItem key={item.id} inventory={inventory}
+            item={remainingAmount === item.amount ? item : { ...item, amount: remainingAmount }} />;
+        })}
+        {craft && <CraftingItem craft={craft} />}
         <PlacementCells inventory={inventory} />
       </div>
     </div>
@@ -653,10 +671,10 @@ function QuantityDialog() {
 
 function DragGhost() {
   const drag = inventoryState.drag;
-  const item = getDraggedItem();
-  if (!drag || !item) return <div className="drag-ghost" hidden />;
-  const size = getItemFootprint(item, drag.isRotated);
   const destination = inventoryState.destination;
+  const item = destination?.craft?.item || getDraggedItem();
+  if (!drag || !item) return <div className="drag-ghost" hidden />;
+  const size = getItemFootprint(item, destination?.craft ? false : drag.isRotated);
   const ghostStyle = {
     width: size.x * inventoryState.cellSize,
     height: size.y * inventoryState.cellSize,
@@ -670,11 +688,11 @@ function DragGhost() {
 
   return (
     <div
-      className={`drag-ghost${destination?.isValid ? "" : " invalid"}`}
+      className={`drag-ghost${destination?.isValid ? "" : " invalid"}${destination?.craft ? " crafting-ghost" : ""}`}
       style={ghostStyle}
     >
-      <ItemImage item={item} isRotated={drag.isRotated} isGhost />
-      <span className="amount">{drag.quantity}</span>
+      <ItemImage item={item} isRotated={destination?.craft ? false : drag.isRotated} isGhost />
+      <span className="amount">{destination?.craft ? 1 : drag.quantity}</span>
     </div>
   );
 }
@@ -841,8 +859,8 @@ export function InventoryApp() {
         <ItemContextMenu />
         <QuantityDialog />
         <footer>
-          <span>TAB / ESC · Close</span>
-          <span>Drag items · Right-click for actions</span>
+          <span>{inventoryState.crafting || inventoryState.craftingPending ? "ESC · Cancel crafting" : "TAB / ESC · Close"}</span>
+          {!inventoryState.crafting && !inventoryState.craftingPending && <span>Drag items · Right-click for actions</span>}
           <button id="reset" onClick={resetInventoryLayout}>
             Reset layout
           </button>

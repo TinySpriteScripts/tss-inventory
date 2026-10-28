@@ -13,12 +13,14 @@ shared_scripts {
     'data/containers.lua',
     'data/vehicles.lua',
     'data/vehicle_models.lua',
-    'data/shops.lua'
+    'data/shops.lua',
+    'data/crafting.lua'
 }
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'modules/inventory/core.lua',
+    'modules/crafting/server.lua',
     'modules/inventory/database.lua',
     'modules/inventory/weight.lua',
     'modules/inventory/exports.lua',
@@ -42,6 +44,5 @@ files {
     'web/index.html',
     'web/style.css',
     'web/app.js',
-    'web/images/*.png',
-    'web/images/*.svg'
+    'web/images/*.png'
 }

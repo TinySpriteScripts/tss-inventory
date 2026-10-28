@@ -16,6 +16,7 @@ local shopService = nil
 local storageService = nil
 local extraInventoryService = nil
 local weightService = nil
+local craftingService = nil
 
 local inventoryTypes = {
     extra = { label = 'Extra inventory', size = { x = 1, y = 1 } },
@@ -83,11 +84,11 @@ local function cleanCoordinates(coordinates)
     return result
 end
 
-local function notifyPlayer(playerSource, message)
+local function notifyPlayer(playerSource, message, notificationOnly)
     if playerSource ~= 0 and (message == 'Player character is not loaded'
         or message == 'Owner character is not loaded' or message == 'Inventory database is not ready') then return end
     if playerSource == 0 then print('[tss-inventory] ' .. tostring(message))
-    else TriggerClientEvent('tss-inventory:notice', playerSource, tostring(message)) end
+    else TriggerClientEvent('tss-inventory:notice', playerSource, tostring(message), notificationOnly == true) end
 end
 
 local function loadInventory(inventoryId)
@@ -152,6 +153,7 @@ local function snapshot(inventory, playerSource)
         result.layoutSettings = false
     end
     if result.isOwn then
+        result.craftingRecipes = craftingService and craftingService.Recipes() or {}
         result.playerSettings = preferences
         result.itemKeybinds = inventoryCore.copy(inventory.settings.itemKeybinds or {})
     end
@@ -846,6 +848,8 @@ end
 
 local function handleAction(playerSource, request)
     if type(request) ~= 'table' then return false, 'Invalid request' end
+    if request.kind == 'cancelCraft' then return craftingService.Cancel(playerSource) end
+    if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
     if playerInventoryIds[playerSource] ~= database.PlayerInventoryId(playerSource) then return false, 'Character session changed' end
     if request.kind == 'preferences' or request.kind == 'resetWindows' then
         local ownInventory, playerError = ensurePlayerInventory(playerSource)
@@ -873,6 +877,7 @@ local function handleAction(playerSource, request)
     if sourceInventory.type == 'drop' and not dropService.IsNearby(playerSource, sourceInventory.id) then return false, 'Move closer to the drop' end
     if sourceInventory.revision ~= request.revision then sendInventories(playerSource); return false, 'Inventory changed; try again' end
     if inventoryLocks[sourceInventory.id] then return false, 'Inventory is busy' end
+    if request.kind == 'craft' then return craftingService.Start(playerSource, sourceInventory, request) end
     if request.kind == 'buy' then
         if sourceInventory.type ~= 'shop' or not inventorySession[request.to] then return false, 'Shop access denied' end
         return shopService.Buy(playerSource, request)
@@ -994,6 +999,7 @@ local function findCarriedItem(playerSource, selector)
 end
 
 local function prepareCarriedUse(playerSource, selector)
+    if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
     local sourceInventory, item, ownInventory, playerError = findCarriedItem(playerSource, selector)
     if not item then return false, playerError or 'Item is not carried' end
     local definition = inventoryCore.definition(item.name)
@@ -1076,6 +1082,7 @@ registerPlayerEvent('tss-inventory:openShop', function(playerSource, shopId) ret
 registerPlayerEvent('tss-inventory:requestWorldDrops', function(playerSource) dropService.SyncPlayer(playerSource); return true end)
 registerPlayerEvent('tss-inventory:openWorldDrop', function(playerSource, inventoryId) return dropService.Open(playerSource, inventoryId) end)
 registerPlayerEvent('tss-inventory:closeSession', function(playerSource, inventoryId)
+    if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
     if inventoryId and sessions[playerSource] then sessions[playerSource][inventoryId] = nil
     else sessions[playerSource] = nil end
     return true
@@ -1130,7 +1137,8 @@ local function adminCommand(commandName, callback)
         allowConsole = true,
     }, function(playerSource, parsedArguments, rawCommand, arguments)
         local succeeded, message = runOperation(callback, playerSource, arguments, rawCommand)
-        notifyPlayer(playerSource, message or (succeeded and 'Done' or 'Command failed'))
+        if succeeded and message == false then return end
+        notifyPlayer(playerSource, message or (succeeded and 'Done' or 'Command failed'), true)
     end)
     if not registered then
         print(('[tss-inventory] Could not register /%s: %s'):format(commandName, tostring(registrationError)))
@@ -1146,14 +1154,45 @@ end
 adminCommand('inventoryhelp', function()
     return true, 'additem [player ID] [item] [amount]; removeitem [inventory/self] [item ID] [amount]; createinventory [ID] [type]; openinventory [ID]; resizeinventory [ID/self] [columns] [rows]; setinventorymetadata [ID/self] [JSON]; setitemmetadata [ID/self] [item ID] [JSON]; inspectinventory [ID/self]'
 end)
-adminCommand('additem', function(_, arguments)
+local function commandItemFeedback(playerSource, inventory, itemName, itemLabel, amount, action)
+    notifyItemChange(inventory.id, itemName, action, amount, true)
+    if inventory.id == database.PlayerInventoryId(playerSource) then return true, false end
+
+    local targetName = inventory.label or inventory.id
+    for targetSource, inventoryId in pairs(playerInventoryIds) do
+        if inventoryId == inventory.id and database.PlayerInventoryId(targetSource) == inventoryId then
+            targetName = GetPlayerName(targetSource) or targetName
+            break
+        end
+    end
+    if action == 'added' then return true, ('Gave %s %d x %s'):format(targetName, amount, itemLabel) end
+    return true, ('Removed %d x %s from %s'):format(amount, itemLabel, targetName)
+end
+
+adminCommand('additem', function(playerSource, arguments)
     local inventory, playerError = ensurePlayerInventory(tonumber(arguments[1]))
     if not inventory then return false, playerError end
-    return mutateInventory(inventory.id, inventoryCore.add, arguments[2], tonumber(arguments[3]) or 1, {})
+    local itemName = arguments[2]
+    local amount = tonumber(arguments[3]) or 1
+    local added, addError = mutateInventory(inventory.id, inventoryCore.add, itemName, amount, {})
+    if not added then return false, addError end
+    return commandItemFeedback(playerSource, inventory, itemName, inventoryCore.definition(itemName).label, amount, 'added')
 end)
+
 adminCommand('removeitem', function(playerSource, arguments)
-    return mutateInventory(commandInventory(playerSource, arguments[1]), inventoryCore.remove, tonumber(arguments[2]), tonumber(arguments[3]) or 1)
+    local inventoryId = commandInventory(playerSource, arguments[1])
+    local inventory = loadInventory(inventoryId)
+    local itemId = tonumber(arguments[2])
+    local item = inventory and inventoryCore.find(inventory, itemId)
+    if not item then return false, 'Item not found' end
+    local amount = tonumber(arguments[3]) or 1
+    local itemName = item.name
+    local itemLabel = inventoryCore.itemDefinition(item).label
+    local removed, removeError = mutateInventory(inventoryId, inventoryCore.remove, itemId, amount)
+    if not removed then return false, removeError end
+    return commandItemFeedback(playerSource, inventory, itemName, itemLabel, amount, 'removed')
 end)
+
 adminCommand('createinventory', function(_, arguments) return createInventory(arguments[1], arguments[2] or 'stash') end)
 adminCommand('openinventory', function(playerSource, arguments) return openInventory(playerSource, commandInventory(playerSource, arguments[1])) end)
 adminCommand('resizeinventory', function(playerSource, arguments)
@@ -1222,6 +1261,10 @@ inventoryContext.createLinked = function(playerSource, parentInventory, item, ty
     return created, creationError
 end
 
+craftingService = TSSCreateCraftingService({
+    identity = database.PlayerInventoryId, load = loadInventory, locks = inventoryLocks,
+    commit = commit, operation = runOperation, notify = notifyPlayer,
+})
 extraInventoryService = TSSCreateExtraInventoryService(inventoryContext)
 weightService = TSSCreateWeightService({
     load = loadInventory,
@@ -1234,6 +1277,7 @@ dropService = TSSCreateWorldDropService(inventoryContext)
 shopService = TSSCreateShopService(inventoryContext)
 
 local function unloadCharacter(playerSource)
+    craftingService.Cancel(playerSource)
     sessions[playerSource] = nil
     playerInventoryIds[playerSource] = nil
     requestLimits[playerSource] = nil

@@ -1,4 +1,6 @@
 local isOpen = false
+local isCrafting = false
+local pendingCraftRequestId = nil
 local nextRequestId = 0
 local pendingRequests = {}
 local ownInventory = nil
@@ -15,6 +17,7 @@ local function copyValue(value)
 end
 
 local function closeInventory(shouldNotifyServer)
+    if isCrafting and shouldNotifyServer ~= false then return false end
     isOpen = false
     SetNuiFocus(false, false)
     SendNUIMessage({ type = 'close' })
@@ -49,6 +52,13 @@ end)
 
 RegisterKeyMapping('inv', 'Open inventory', 'keyboard', Config.OpenKey)
 
+RegisterNetEvent('tss-inventory:crafting', function(craft)
+    if source ~= 65535 then return end
+    pendingCraftRequestId = nil
+    isCrafting = type(craft) == 'table'
+    SendNUIMessage({ type = 'crafting', craft = craft })
+end)
+
 RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, cellSize)
     if source ~= 65535 then return end
     isOpen = true
@@ -80,14 +90,18 @@ exports('ItemBox', function(itemName, action, amount)
     return showItemBox(definition, action, amount)
 end)
 
-RegisterNetEvent('tss-inventory:notice', function(message)
+RegisterNetEvent('tss-inventory:notice', function(message, notificationOnly)
     if source ~= 65535 then return end
-    SendNUIMessage({ type = 'notice', message = tostring(message) })
+    if notificationOnly ~= true then SendNUIMessage({ type = 'notice', message = tostring(message) }) end
     bridge.Notify.Send({ title = 'Inventory', description = tostring(message), type = 'inform' })
 end)
 
 RegisterNetEvent('tss-inventory:result', function(requestId, succeeded, message)
     if source ~= 65535 then return end
+    if pendingCraftRequestId == requestId then
+        pendingCraftRequestId = nil
+        if not succeeded then isCrafting = false end
+    end
     local callback = pendingRequests[requestId]
     if callback then
         pendingRequests[requestId] = nil
@@ -137,6 +151,7 @@ RegisterNUICallback('close', function(_, callback)
 end)
 
 RegisterNUICallback('closeInventory', function(request, callback)
+    if isCrafting then return callback({ ok = false }) end
     TriggerServerEvent('tss-inventory:closeSession', request.id)
     callback({ ok = true })
 end)
@@ -144,10 +159,18 @@ end)
 RegisterNUICallback('action', function(request, callback)
     nextRequestId = nextRequestId + 1
     local requestId = nextRequestId
+    if request.kind == 'craft' then
+        isCrafting = true
+        pendingCraftRequestId = requestId
+    end
     pendingRequests[requestId] = callback
     TriggerServerEvent('tss-inventory:action', requestId, request)
     SetTimeout(10000, function()
         if pendingRequests[requestId] then
+            if pendingCraftRequestId == requestId then
+                pendingCraftRequestId = nil
+                isCrafting = false
+            end
             pendingRequests[requestId] = nil
             callback({ ok = false, message = 'Server request timed out' })
         end

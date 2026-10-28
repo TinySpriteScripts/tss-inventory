@@ -99,3 +99,11 @@ Item keys use raw keyboard state while the inventory is closed and NUI key event
 ## Migrating other scripts
 
 The common qb-inventory-style exports are available without a framework layer: HasItem (client/server), CanAddItem, item getters, usable registration/UseItem, metadata, weight/slot helpers and clears. AddItem/RemoveItem accept player-ID forms as well as native TSS inventory-ID forms. See exports.md for exact signatures and grid differences, and migration.md for small manual core-function replacements. No framework source is modified automatically.
+
+## Player crafting
+
+Define recipes in `data/crafting.lua`. The recipe key is the output item name. `input` must contain exactly two different item names and their required amounts. `time` is the crafting duration in seconds. Each craft produces one output item.
+
+Drag either ingredient onto the other in your own player inventory. Both selected stacks must contain the required amounts. A matching recipe previews the output and marks its space green. The output uses the target item's position if it fits, then the dragged item's position, then the first available space.
+
+Release to craft. A green outline fills around the result while crafting. Items cannot be moved or used and the inventory cannot be closed until it finishes. ESC cancels without consuming ingredients. The server checks the recipe, ingredients, space and weight, and only saves the result when its timer finishes.

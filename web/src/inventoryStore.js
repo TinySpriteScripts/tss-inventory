@@ -1,3 +1,4 @@
+import { planCraft } from "./crafting.js";
 // FiveM messages and pointer interactions live here; React owns all rendered UI.
 import {
   DOCK_SLOT_IDS,
@@ -38,6 +39,8 @@ export const inventoryState = {
   pointer: { x: 0, y: 0 },
   viewport: { width: innerWidth, height: innerHeight },
   drag: null,
+  crafting: null,
+  craftingPending: false,
   destination: null,
   dockTarget: null,
   isDockKeyHeld: false,
@@ -271,8 +274,9 @@ export async function requestItemAction(
   actionKind,
   details = {},
 ) {
-  if (inventoryState.isRequestPending) return;
+  if (inventoryState.isRequestPending || inventoryState.crafting || inventoryState.craftingPending) return;
   inventoryState.isRequestPending = true;
+  if (actionKind === "craft") inventoryState.craftingPending = true;
   clearPopups();
   publishChanges();
 
@@ -289,6 +293,7 @@ export async function requestItemAction(
       showNotice(response.message);
   } finally {
     inventoryState.isRequestPending = false;
+    if (actionKind === "craft") inventoryState.craftingPending = false;
     publishChanges();
   }
 }
@@ -313,6 +318,7 @@ export function hideItemTooltip() {
 }
 
 export function openItemContextMenu(inventory, item, pointerEvent) {
+  if (inventoryState.crafting || inventoryState.craftingPending) { pointerEvent.preventDefault(); return; }
   pointerEvent.preventDefault();
   pointerEvent.stopPropagation();
   touchInventory(inventory);
@@ -462,6 +468,7 @@ async function quickTransferItem(inventory, item, half) {
 }
 
 export function pressInventoryItem(inventory, item, pointerEvent) {
+  if (inventoryState.crafting || inventoryState.craftingPending) return;
   if (
     pointerEvent.button !== 0 ||
     inventoryState.drag ||
@@ -540,6 +547,20 @@ function calculateDestination() {
     Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) +
     1 -
     drag.offsetY;
+  const hoveredColumn = Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) + 1;
+  const hoveredRow = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1;
+  const hoveredItem = inventory.items.find((candidate) => {
+    const footprint = getItemFootprint(candidate);
+    return candidate.id !== item.id && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x &&
+      hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
+  });
+  const craft = inventory.id === drag.inventoryId && hoveredItem && planCraft(inventory, item, hoveredItem);
+  if (craft) return {
+    inventoryId: inventory.id, column: craft.item.x, row: craft.item.y, isValid: true, craft,
+    highlight: { x: craft.item.x, y: craft.item.y, width: craft.item.definition.size.x, height: craft.item.definition.size.y },
+    screenX: gridBounds.left + (craft.item.x - 1) * inventoryState.cellSize,
+    screenY: gridBounds.top + (craft.item.y - 1) * inventoryState.cellSize,
+  };
   const size = getItemFootprint(item, drag.isRotated);
   let highlight = { x: column, y: row, width: size.x, height: size.y };
   const result = (isValid, reason = "") => ({
@@ -719,6 +740,12 @@ function finishItemDrag() {
   }
   if (!destination.isValid) return showNotice(destination.reason);
   const targetInventory = findInventory(destination.inventoryId);
+  if (destination.craft) {
+    void requestItemAction(sourceInventory, item, "craft", {
+      recipe: destination.craft.recipe, targetItemId: destination.craft.targetItemId,
+    });
+    return;
+  }
 
   requestItemAction(
     sourceInventory,
@@ -860,6 +887,7 @@ function applyWindowReset() {
 }
 
 export async function closeInventoryWindow(inventory) {
+  if (inventoryState.crafting || inventoryState.craftingPending) return;
   await layoutSavePromise;
   inventoryState.inventories = inventoryState.inventories.filter(
     (candidate) => candidate.id !== inventory.id,
@@ -870,6 +898,7 @@ export async function closeInventoryWindow(inventory) {
 }
 
 export async function closeInventoryUi() {
+  if (inventoryState.crafting || inventoryState.craftingPending) return;
   await layoutSavePromise;
   inventoryState.isOpen = false;
   inventoryState.dialog = null;
@@ -997,6 +1026,14 @@ function handlePointerUp(pointerEvent) {
 }
 
 function handleKeyDown(keyboardEvent) {
+  if (inventoryState.crafting || inventoryState.craftingPending) {
+    keyboardEvent.preventDefault();
+    keyboardEvent.stopImmediatePropagation();
+    if (keyboardEvent.key === "Escape" && !keyboardEvent.repeat) {
+      void sendNuiRequest("action", { kind: "cancelCraft" });
+    }
+    return;
+  }
   if (inventoryState.keybindCapture) {
     keyboardEvent.preventDefault();
     keyboardEvent.stopImmediatePropagation();
@@ -1118,7 +1155,13 @@ function handleKeyUp(keyboardEvent) {
 function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
-  if (message.type === "itemKeybinds") {
+  if (message.type === "crafting") {
+    inventoryState.crafting = message.craft || null;
+    inventoryState.craftingPending = false;
+    clearPopups();
+    cancelItemDrag(false);
+    publishChanges();
+  } else if (message.type === "itemKeybinds") {
     inventoryState.itemKeybinds = message.bindings || {};
     publishChanges();
   } else if (message.type === "openSettings") {
@@ -1267,6 +1310,12 @@ export function initialiseInventoryUi() {
     refreshDockingPreview();
     cancelItemDrag();
   });
+  document.addEventListener("pointerdown", (pointerEvent) => {
+    if (inventoryState.crafting || inventoryState.craftingPending) {
+      pointerEvent.preventDefault();
+      pointerEvent.stopImmediatePropagation();
+    }
+  }, true);
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
   document.addEventListener("contextmenu", (pointerEvent) =>

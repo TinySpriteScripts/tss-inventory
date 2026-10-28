@@ -11,5 +11,5 @@ local craftingRecipes = {
 }
 
 for craftedRecipe, recipeDefinition in pairs(craftingRecipes) do
-    TSSItems[craftedRecipe] = recipeDefinition
+    TSSCrafting[craftedRecipe] = recipeDefinition
 end
