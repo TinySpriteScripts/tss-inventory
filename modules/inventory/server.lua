@@ -1,3 +1,5 @@
+local maxMetadataBytes = 8192
+
 local inventoryCore = TSSCore
 local database = TSSDatabase
 local inventories = {}
@@ -46,6 +48,7 @@ end
 
 local function cleanMetadata(value)
     if type(value) ~= 'table' then return nil, 'Metadata must be an object' end
+    if value.label ~= nil and (type(value.label) ~= 'string' or #value.label > 100 or not value.label:match('%S')) then return nil, 'Label must be nonempty text up to 100 bytes' end
     local function validValue(fieldValue, depth)
         if depth > 8 then return false end
         if type(fieldValue) == 'table' then
@@ -59,7 +62,7 @@ local function cleanMetadata(value)
     end
     if not validValue(value, 0) then return nil, 'Metadata must contain finite JSON object values (maximum depth 8)' end
     local encoded, jsonValue = pcall(json.encode, value)
-    if not encoded or #jsonValue > Config.MaxMetadataBytes then return nil, 'Metadata too large' end
+    if not encoded or #jsonValue > maxMetadataBytes then return nil, 'Metadata too large' end
     return inventoryCore.copy(value)
 end
 
@@ -133,7 +136,7 @@ local function getPlayerPreferences(inventory)
 end
 
 local function snapshot(inventory, playerSource)
-    local result = inventoryCore.copy(inventory)
+    local result = inventoryCore.inventoryView(inventory)
     result.owner = nil
     result.weight = inventoryCore.weight(inventory)
     result.dynamicContainerWeight = Config.DynamicContainerWeight == true
@@ -153,7 +156,7 @@ local function snapshot(inventory, playerSource)
         result.itemKeybinds = inventoryCore.copy(inventory.settings.itemKeybinds or {})
     end
     result.settings = nil
-    for _, item in ipairs(result.items) do item.definition = inventoryCore.definition(item.name) end
+    for _, item in ipairs(result.items) do item.definition = inventoryCore.itemDefinition(item) end
     return result
 end
 
@@ -258,7 +261,7 @@ local function createInventory(inventoryId, typeName, options, linkedInventory)
     if type(inventory.label) ~= 'string' or #inventory.label > 100 then return false, 'Invalid inventory label' end
     inventories[inventoryId] = inventory
     if linkedInventory then commit(inventory, linkedInventory) else commit(inventory) end
-    return true, inventoryCore.copy(inventory)
+    return true, inventoryCore.inventoryView(inventory)
 end
 
 local function ensurePlayerInventory(playerSource)
@@ -318,7 +321,7 @@ end
 
 local function getInventoryCopy(inventoryId)
     local inventory = loadInventory(inventoryId)
-    return inventory and inventoryCore.copy(inventory) or nil
+    return inventory and inventoryCore.inventoryView(inventory) or nil
 end
 
 local function resolveInventoryIdentifier(identifier)
@@ -343,7 +346,7 @@ end
 registerExport('GetInventory', getInventoryCopy)
 registerExport('GetPlayerInventory', function(playerSource)
     local inventory, playerError = ensurePlayerInventory(tonumber(playerSource))
-    return inventory and inventoryCore.copy(inventory) or nil, playerError
+    return inventory and inventoryCore.inventoryView(inventory) or nil, playerError
 end)
 
 registerExport('GetItemDefinition', inventoryCore.definition)
@@ -363,7 +366,7 @@ registerExport('CreateInventory', function(inventoryId, typeName, options)
         local translated, translationError = legacyInventoryOptions(typeName)
         if not translated then return false, translationError end
         local existing = loadInventory(inventoryId)
-        if existing then return true, inventoryCore.copy(existing) end
+        if existing then return true, inventoryCore.inventoryView(existing) end
         return createInventory(inventoryId, 'stash', translated)
     end
     return createInventory(inventoryId, typeName, options)
@@ -378,10 +381,14 @@ end)
 registerExport('GetContainer', function(inventoryId)
     local inventory = loadInventory(inventoryId)
     if not inventory or inventory.type == 'player' or inventory.type == 'drop' then return nil end
-    return inventoryCore.copy(inventory)
+    return inventoryCore.inventoryView(inventory)
 end)
 
-registerExport('GetContainersByOwner', function(citizenId) return database.ContainersForOwner(citizenId) end)
+registerExport('GetContainersByOwner', function(citizenId)
+    local results = {}
+    for _, inventory in ipairs(database.ContainersForOwner(citizenId)) do results[#results + 1] = inventoryCore.inventoryView(inventory) end
+    return results
+end)
 
 registerExport('DeleteContainer', function(inventoryId)
     local inventory = loadInventory(inventoryId)
@@ -470,7 +477,7 @@ registerExport('AddItem', function(identifier, itemName, amount, metadata, notif
         or (metadata == nil and type(notification) == 'table') or reason ~= nil
     local preferredSlot
     if qbStyle then
-        preferredSlot, metadata, notification = metadata, notification or {}, nil
+        preferredSlot, metadata, notification = metadata, notification or nil, nil
         if preferredSlot ~= nil and preferredSlot ~= false and not inventoryCore.integer(preferredSlot, 1, 1e12) then return false, 'Invalid preferred slot' end
     end
     local inventoryId, playerError = resolveInventoryIdentifier(identifier)
@@ -606,10 +613,19 @@ end)
 
 registerExport('ResizeInventory', function(inventoryId, size, shouldRepack) return mutateInventory(inventoryId, inventoryCore.resize, size, shouldRepack == true) end)
 
+local function updateInventoryDetails(inventoryId, callback)
+    local inventory = loadInventory(inventoryId)
+    if not inventory then return false, 'Inventory not found' end
+    if inventoryLocks[inventoryId] then return false, 'Inventory is busy' end
+    local updated, updateError = callback(inventory)
+    if updated then commit(inventory) end
+    return updated, updateError
+end
+
 registerExport('SetInventoryMetadata', function(inventoryId, metadata)
     local cleaned, metadataError = cleanMetadata(metadata)
     if not cleaned then return false, metadataError end
-    return mutateInventory(inventoryId, function(inventory)
+    return updateInventoryDetails(inventoryId, function(inventory)
         if inventory.metadata.containerItem then cleaned.containerItem = inventory.metadata.containerItem end
         inventory.metadata = cleaned
         return true
@@ -628,9 +644,30 @@ registerExport('SetItemMetadata', function(inventoryId, itemId, metadata)
     end)
 end)
 
+registerExport('SetItemLabel', function(inventoryId, itemId, label)
+    if label ~= nil and label ~= false and (type(label) ~= 'string' or #label > 100 or not label:match('%S')) then return false, 'Invalid label' end
+    return updateInventoryDetails(inventoryId, function(inventory)
+        local item = inventoryCore.find(inventory, itemId)
+        if not item then return false, 'Item not found' end
+        local metadata = inventoryCore.copy(item.metadata)
+        metadata.label = label or nil
+        local cleaned, metadataError = cleanMetadata(metadata)
+        if not cleaned then return false, metadataError end
+        item.metadata = cleaned
+        return true
+    end)
+end)
+
 registerExport('SetInventoryLabel', function(inventoryId, label)
-    if type(label) ~= 'string' or #label > 100 then return false, 'Invalid label' end
-    return mutateInventory(inventoryId, function(inventory) inventory.label = label; return true end)
+    if label ~= nil and label ~= false and (type(label) ~= 'string' or #label > 100 or not label:match('%S')) then return false, 'Invalid label' end
+    return updateInventoryDetails(inventoryId, function(inventory)
+        local metadata = inventoryCore.copy(inventory.metadata)
+        metadata.label = label or nil
+        local cleaned, metadataError = cleanMetadata(metadata)
+        if not cleaned then return false, metadataError end
+        inventory.metadata = cleaned
+        return true
+    end)
 end)
 
 registerExport('SetInventoryRules', function(inventoryId, rules)
@@ -705,12 +742,15 @@ registerExport('RemoveExtraInventory', function(playerSource, slotName) return e
 
 registerExport('GetExtraInventory', function(playerSource, slotName)
     local inventory, inventoryError = extraInventoryService.Get(tonumber(playerSource), slotName)
-    return inventory and inventoryCore.copy(inventory) or nil, inventoryError
+    return inventory and inventoryCore.inventoryView(inventory) or nil, inventoryError
 end)
 
 registerExport('GetExtraInventories', function(playerSource)
     local inventories, inventoryError = extraInventoryService.Roots(tonumber(playerSource), true)
-    return inventories and inventoryCore.copy(inventories) or nil, inventoryError
+    if not inventories then return nil, inventoryError end
+    local results = {}
+    for _, inventory in ipairs(inventories) do results[#results + 1] = inventoryCore.inventoryView(inventory) end
+    return results
 end)
 
 registerExport('OpenExtraInventory', function(playerSource, slotName)
@@ -865,7 +905,7 @@ local function handleAction(playerSource, request)
             and not (sourceInventory.type == 'extra' and extraInventoryService.CanAccess(playerSource, sourceInventory.id)) then return false, 'Use items from your own inventory' end
         local registration = item and usableItems[item.name]
         if not definition or not definition.useable or not registration then return false, 'Item cannot be used' end
-        local itemSnapshot = inventoryCore.copy(item)
+        local itemSnapshot = inventoryCore.itemView(item)
         return true, nil, function() registration.handler(playerSource, itemSnapshot, sourceInventory.id) end
     end
     if (request.kind ~= 'move' and request.kind ~= 'quickMove') or not inventorySession[request.to] then return false, 'Invalid destination' end
@@ -966,7 +1006,7 @@ local function prepareCarriedUse(playerSource, selector)
     end
     local registration = usableItems[item.name]
     if not registration then return false, 'Item cannot be used' end
-    local itemSnapshot = inventoryCore.copy(item)
+    local itemSnapshot = inventoryCore.itemView(item)
     return true, nil, function() registration.handler(playerSource, itemSnapshot, sourceInventory.id) end
 end
 
@@ -983,7 +1023,11 @@ exports('UseItem', function(playerOrName, selectorOrSource, item)
     local playerSource, selector = playerOrName, selectorOrSource
     if type(playerOrName) == 'string' then
         playerSource, selector = selectorOrSource, item or playerOrName
-        if type(selector) == 'table' and selector.name and selector.name ~= playerOrName then return false, 'Item name mismatch' end
+        if type(selector) == 'table' then
+            if selector.name and selector.name ~= playerOrName then return false, 'Item name mismatch' end
+            selector = inventoryCore.copy(selector)
+            selector.name = playerOrName
+        end
     end
     local succeeded, message, callback = runOperation(prepareCarriedUse, tonumber(playerSource), selector)
     if succeeded and callback then
@@ -1037,35 +1081,85 @@ registerPlayerEvent('tss-inventory:closeSession', function(playerSource, invento
     return true
 end)
 
+local commandBridge = exports.tss_bridge:GetModules({ 'Commands' }, Config.TSS).Commands
+local adminCommandDefinitions = {
+    inventoryhelp = { description = 'Show inventory admin commands.', arguments = {} },
+    additem = { description = 'Give an item to a player.', arguments = {
+        { name = 'player', type = 'integer', help = 'Online player ID' },
+        { name = 'item', help = 'Item name, such as radio' },
+        { name = 'amount', type = 'integer', optional = true, help = 'Amount to add; defaults to 1' },
+    } },
+    removeitem = { description = 'Remove an item instance from an inventory.', arguments = {
+        { name = 'inventory', help = 'Inventory ID, online player ID, or self' },
+        { name = 'item', type = 'integer', help = 'Item instance ID' },
+        { name = 'amount', type = 'integer', optional = true, help = 'Amount to remove; defaults to 1' },
+    } },
+    createinventory = { description = 'Create an inventory.', arguments = {
+        { name = 'inventory', help = 'New inventory ID' },
+        { name = 'type', optional = true, help = 'Inventory type; defaults to stash' },
+    } },
+    openinventory = { description = 'Open an inventory for inspection.', arguments = {
+        { name = 'inventory', optional = true, help = 'Inventory ID, online player ID, or self' },
+    } },
+    resizeinventory = { description = 'Change inventory grid dimensions.', arguments = {
+        { name = 'inventory', help = 'Inventory ID, online player ID, or self' },
+        { name = 'columns', type = 'integer', help = 'Grid width (1–100)' },
+        { name = 'rows', type = 'integer', help = 'Grid height (1–100)' },
+    } },
+    setinventorymetadata = { description = 'Replace inventory metadata.', arguments = {
+        { name = 'inventory', help = 'Inventory ID, online player ID, or self' },
+        { name = 'metadata', type = 'rest', help = 'JSON object' },
+    } },
+    setitemmetadata = { description = 'Replace item instance metadata.', arguments = {
+        { name = 'inventory', help = 'Inventory ID, online player ID, or self' },
+        { name = 'item', type = 'integer', help = 'Item instance ID' },
+        { name = 'metadata', type = 'rest', help = 'JSON object' },
+    } },
+    inspectinventory = { description = 'Print inventory data.', arguments = {
+        { name = 'inventory', optional = true, help = 'Inventory ID, online player ID, or self' },
+    } },
+}
+
 local function adminCommand(commandName, callback)
-    RegisterCommand(commandName, function(playerSource, arguments, rawCommand)
+    local definition = adminCommandDefinitions[commandName]
+    local registered, registrationError = commandBridge.Register(commandName, {
+        description = definition.description,
+        arguments = definition.arguments,
+        category = 'Inventory admin',
+        permission = 'command.' .. commandName,
+        allowConsole = true,
+    }, function(playerSource, parsedArguments, rawCommand, arguments)
         local succeeded, message = runOperation(callback, playerSource, arguments, rawCommand)
         notifyPlayer(playerSource, message or (succeeded and 'Done' or 'Command failed'))
-    end, true)
+    end)
+    if not registered then
+        print(('[tss-inventory] Could not register /%s: %s'):format(commandName, tostring(registrationError)))
+    end
 end
 
 local function commandInventory(playerSource, suppliedId)
+    if tonumber(suppliedId) then return database.PlayerInventoryId(tonumber(suppliedId)) end
     if suppliedId and suppliedId ~= 'self' then return suppliedId end
     return database.PlayerInventoryId(playerSource)
 end
 
-adminCommand('invhelp', function()
-    return true, 'invadditem [player ID] [item] [amount]; invremoveitem [inventory/self] [item ID] [amount]; invcreate [ID] [type]; invopen [ID]; invresize [ID/self] [columns] [rows]; invmeta [ID/self] [JSON]; invitemmeta [ID/self] [item ID] [JSON]; invinspect [ID/self]'
+adminCommand('inventoryhelp', function()
+    return true, 'additem [player ID] [item] [amount]; removeitem [inventory/self] [item ID] [amount]; createinventory [ID] [type]; openinventory [ID]; resizeinventory [ID/self] [columns] [rows]; setinventorymetadata [ID/self] [JSON]; setitemmetadata [ID/self] [item ID] [JSON]; inspectinventory [ID/self]'
 end)
-adminCommand('invadditem', function(_, arguments)
+adminCommand('additem', function(_, arguments)
     local inventory, playerError = ensurePlayerInventory(tonumber(arguments[1]))
     if not inventory then return false, playerError end
     return mutateInventory(inventory.id, inventoryCore.add, arguments[2], tonumber(arguments[3]) or 1, {})
 end)
-adminCommand('invremoveitem', function(playerSource, arguments)
+adminCommand('removeitem', function(playerSource, arguments)
     return mutateInventory(commandInventory(playerSource, arguments[1]), inventoryCore.remove, tonumber(arguments[2]), tonumber(arguments[3]) or 1)
 end)
-adminCommand('invcreate', function(_, arguments) return createInventory(arguments[1], arguments[2] or 'stash') end)
-adminCommand('invopen', function(playerSource, arguments) return openInventory(playerSource, commandInventory(playerSource, arguments[1])) end)
-adminCommand('invresize', function(playerSource, arguments)
+adminCommand('createinventory', function(_, arguments) return createInventory(arguments[1], arguments[2] or 'stash') end)
+adminCommand('openinventory', function(playerSource, arguments) return openInventory(playerSource, commandInventory(playerSource, arguments[1])) end)
+adminCommand('resizeinventory', function(playerSource, arguments)
     return mutateInventory(commandInventory(playerSource, arguments[1]), inventoryCore.resize, { x = tonumber(arguments[2]), y = tonumber(arguments[3]) })
 end)
-adminCommand('invmeta', function(playerSource, arguments, rawCommand)
+adminCommand('setinventorymetadata', function(playerSource, arguments, rawCommand)
     local encodedMetadata = rawCommand:match('^%S+%s+%S+%s+(.+)$')
     local decoded, value = pcall(json.decode, encodedMetadata or '')
     local metadata, metadataError = cleanMetadata(decoded and value or nil)
@@ -1076,7 +1170,7 @@ adminCommand('invmeta', function(playerSource, arguments, rawCommand)
         return true
     end)
 end)
-adminCommand('invitemmeta', function(playerSource, arguments, rawCommand)
+adminCommand('setitemmetadata', function(playerSource, arguments, rawCommand)
     local decoded, value = pcall(json.decode, rawCommand:match('^%S+%s+%S+%s+%S+%s+(.+)$') or '')
     local metadata, metadataError = cleanMetadata(decoded and value or nil)
     if not metadata then return false, metadataError end
@@ -1088,7 +1182,7 @@ adminCommand('invitemmeta', function(playerSource, arguments, rawCommand)
         return true
     end)
 end)
-adminCommand('invinspect', function(playerSource, arguments)
+adminCommand('inspectinventory', function(playerSource, arguments)
     local inventory = getInventoryCopy(commandInventory(playerSource, arguments[1]))
     return inventory ~= nil, inventory and json.encode(inventory) or 'Inventory not found'
 end)

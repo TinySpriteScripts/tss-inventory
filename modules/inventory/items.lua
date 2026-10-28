@@ -2,6 +2,12 @@
 TSSItemExports = {}
 local helpers = TSSItemExports
 
+function helpers.Label(metadata, fallback)
+    local label = type(metadata) == 'table' and metadata.label
+    if type(label) == 'string' and #label <= 100 and label:match('%S') then return label end
+    return fallback
+end
+
 function helpers.HasItem(items, requirements, amount)
     local requested = {}
     local function validAmount(value) return type(value) == 'number' and value % 1 == 0 and value >= 1 and value <= 1000000 end
@@ -33,7 +39,7 @@ function helpers.Item(item, definition)
     for fieldName, value in pairs(item) do result[fieldName] = value end
     result.slot = item.id
     result.info = item.metadata
-    result.label = definition.label or item.name
+    result.label = helpers.Label(item.metadata, definition.label or item.name)
     result.description = definition.description
     result.weight = definition.weight
     result.image = definition.image or (item.name .. '.png')

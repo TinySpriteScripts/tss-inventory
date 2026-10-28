@@ -5,7 +5,7 @@ local ownInventory = nil
 local readyInventoryId = nil
 local itemKeybinds = {}
 local pressedItemKeys = {}
-local bridge = exports.tss_bridge:GetModules({ 'Notify' }, Config.TSS)
+local bridge = exports.tss_bridge:GetModules({ 'Notify', 'Commands' }, Config.TSS)
 
 local function copyValue(value)
     if type(value) ~= 'table' then return value end
@@ -26,11 +26,26 @@ local function requestOwnInventory()
     TriggerServerEvent('tss-inventory:openSelf', nearbyTrunkNetworkId)
 end
 
-RegisterCommand('inv', function()
-    if isOpen then closeInventory() else requestOwnInventory() end
-end, false)
+local function registerInventoryCommand(commandName, description, callback)
+    local registered, registrationError = bridge.Commands.Register(commandName, {
+        description = description,
+        arguments = {},
+        category = 'Inventory',
+        permission = false,
+        allowConsole = false,
+    }, callback)
+    if not registered then
+        print(('[tss-inventory] Could not register /%s: %s'):format(commandName, tostring(registrationError)))
+    end
+end
 
-RegisterCommand('inventorysettings', function() TriggerServerEvent('tss-inventory:openSettings') end, false)
+registerInventoryCommand('inv', 'Open or close your inventory.', function()
+    if isOpen then closeInventory() else requestOwnInventory() end
+end)
+
+registerInventoryCommand('inventorysettings', 'Change inventory settings or reset window positions.', function()
+    TriggerServerEvent('tss-inventory:openSettings')
+end)
 
 RegisterKeyMapping('inv', 'Open inventory', 'keyboard', Config.OpenKey)
 

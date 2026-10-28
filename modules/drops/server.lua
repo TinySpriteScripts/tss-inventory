@@ -358,12 +358,12 @@ function TSSCreateWorldDropService(inventoryContext)
         worldDrops[inventory.id] = { inventory = inventory, coords = inventory.coords, bucket = inventory.bucket }
         inventoryContext.commit(inventory)
         syncWorldDrops()
-        return true, inventoryCore.copy(inventory)
+        return true, inventoryCore.inventoryView(inventory)
     end
 
     function dropService.List()
         local result = {}
-        for _, drop in pairs(worldDrops) do result[#result + 1] = inventoryCore.copy(drop.inventory) end
+        for _, drop in pairs(worldDrops) do result[#result + 1] = inventoryCore.inventoryView(drop.inventory) end
         return result
     end
 

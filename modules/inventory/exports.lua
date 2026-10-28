@@ -8,7 +8,7 @@ function TSSRegisterItemExports(context)
         return context.load(identifier)
     end
 
-    local function view(item) return item and helpers.Item(core.copy(item), core.definition(item.name)) or nil end
+    local function view(item) return item and helpers.Item(core.copy(item), core.itemDefinition(item)) or nil end
 
     local function matchingItems(identifier, itemName)
         local inventory = inventoryFor(identifier)
@@ -131,14 +131,14 @@ function TSSRegisterItemExports(context)
         return clearInventory(identifier)
     end)
 
-    local function registerUsable(itemName, callback)
+    local function registerUsable(itemName, callback, ownerResource)
         if type(callback) == 'table' and rawget(callback, '__cfx_functionReference') == nil then
             callback = callback.func or callback.cb or callback.callback
         end
         local isCallable = type(callback) == 'function' or (type(callback) == 'table' and rawget(callback, '__cfx_functionReference') ~= nil)
         if not core.definition(itemName) or not isCallable then return false, 'Invalid usable item' end
         context.handlers[itemName] = {
-            resource = GetInvokingResource(),
+            resource = ownerResource or GetInvokingResource(),
             handler = function(playerSource, item, inventoryId) callback(playerSource, view(item), inventoryId) end,
         }
         return true

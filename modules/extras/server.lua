@@ -164,7 +164,7 @@ function TSSCreateExtraInventoryService(context)
             if not inventory then context.restore(ownInventory.id); return false, creationError end
         end
         if context.sessions[playerSource] then service.Grant(playerSource); context.send(playerSource) end
-        return true, inventoryCore.copy(inventory)
+        return true, inventoryCore.inventoryView(inventory)
     end
 
     function service.Create(playerSource, slotName, definition)

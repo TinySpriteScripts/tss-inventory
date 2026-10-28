@@ -123,16 +123,19 @@ function TSSCreateShopService(inventoryContext)
                 return false, 'Invalid stock amount'
             end
 
+            local previousLabel
             if previousInventory then
                 for _, previousItem in ipairs(previousInventory.items) do
-                    if previousItem.name == itemName and previousItem.stock ~= false and remainingStock ~= false then
-                        remainingStock = previousItem.stock
+                    if previousItem.name == itemName then
+                        previousLabel = previousItem.metadata.label
+                        if previousItem.stock ~= false and remainingStock ~= false then remainingStock = previousItem.stock end
                     end
                 end
             end
 
             local itemMetadata, metadataError = inventoryContext.metadata(stockDefinition.metadata or itemDefinition.metadata)
             if not itemMetadata then return false, metadataError end
+            if previousLabel then itemMetadata.label = previousLabel end
 
             local shopItem = {
                 id = shopInventory.nextItemId,
@@ -327,7 +330,7 @@ function TSSCreateShopService(inventoryContext)
         })
 
         return true, ('Bought %s × %s for $%s'):format(
-            purchaseRequest.amount, inventoryCore.definition(shopItem.name).label, purchaseCost
+            purchaseRequest.amount, inventoryCore.itemDefinition(shopItem).label, purchaseCost
         )
     end
 

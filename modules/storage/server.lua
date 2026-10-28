@@ -1,15 +1,34 @@
 -- Persistent vehicle compartments and item-bound containers. SQL stays in database.lua.
 function TSSCreateStorageService(context)
     local inventoryCore = TSSCore
-    local loadedBridge, bridge = pcall(function()
-        return exports.tss_bridge:GetModules({ 'Vehicles' }, Config.TSS)
-    end)
-    local vehicles = loadedBridge and bridge.Vehicles
-    local vehicleBridgeReady = vehicles and type(vehicles.FromNetworkId) == 'function'
-        and type(vehicles.Inspect) == 'function' and type(vehicles.Current) == 'function'
-    if not vehicleBridgeReady then
-        print('[tss-inventory] Vehicle storage unavailable: restart updated tss_bridge, then tss-inventory. Personal inventories and database startup remain available.')
+    local function isBridgeFunction(callback)
+        return type(callback) == 'function'
+            or (type(callback) == 'table' and rawget(callback, '__cfx_functionReference') ~= nil)
     end
+
+    local bridge = {}
+    local vehicleBridgeReady = false
+
+    local function ensureVehicleBridge()
+        if vehicleBridgeReady then return true end
+
+        local loadedBridge, vehicleModules = pcall(function()
+            return exports.tss_bridge:GetModules({ 'Vehicles' }, Config.TSS)
+        end)
+        local vehicles = loadedBridge and type(vehicleModules) == 'table' and vehicleModules.Vehicles
+        if not vehicles then return false end
+
+        for _, methodName in ipairs({ 'FromNetworkId', 'Inspect', 'Current' }) do
+            if not isBridgeFunction(vehicles[methodName]) then return false end
+        end
+
+        bridge.Vehicles = vehicles
+        vehicleBridgeReady = true
+        return true
+    end
+
+    ensureVehicleBridge()
+
     local vehicleGrants = {}
     local storageService = {}
     local modelOverrides = {}
@@ -33,7 +52,7 @@ function TSSCreateStorageService(context)
     end
 
     local function validateVehicle(playerSource, networkId, compartment, expectedPlate)
-        if not vehicleBridgeReady then return nil, 'Vehicle bridge needs updating; restart tss_bridge then tss-inventory' end
+        if not ensureVehicleBridge() then return nil, 'Vehicle storage is temporarily unavailable' end
         if compartment ~= 'trunk' and compartment ~= 'glovebox' then return nil, 'Invalid compartment' end
         local vehicle = bridge.Vehicles.FromNetworkId(networkId)
         local info = vehicle and bridge.Vehicles.Inspect(vehicle)
@@ -89,7 +108,7 @@ function TSSCreateStorageService(context)
     end
 
     function storageService.OpenCurrentGlovebox(playerSource)
-        if not vehicleBridgeReady then return false end
+        if not ensureVehicleBridge() then return false end
         local vehicle = bridge.Vehicles.Current(playerSource)
         local info = vehicle and bridge.Vehicles.Inspect(vehicle)
         if info then return storageService.OpenVehicle(playerSource, info.networkId, 'glovebox') end

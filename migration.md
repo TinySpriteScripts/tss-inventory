@@ -1,10 +1,8 @@
-# Basic framework migration
+# Framework setup
 
-This is a manual edit guide. It does not install a framework layer or import old inventories. Only the APIs that currently exist are used below; see exports.md for the complete list.
+## 1. Start the resources
 
-## Startup
-
-Start oxmysql, your framework, tss_bridge, then tss-inventory. Start scripts that register usable items after tss-inventory. Disable the inventory you are replacing for that test run.
+Add these settings before the resources start in server.cfg:
 
 ```cfg
 setr tss_framework qb
@@ -16,126 +14,114 @@ ensure tss_bridge
 ensure tss-inventory
 ```
 
-For Qbox use framework `qbox` and resource `qbx_core`. For ESX use framework `esx` and resource `es_extended`.
+For Qbox, use `qbox` and `qbx_core`. For ESX, use `esx` and `es_extended`.
 
-Define every usable item in tss-inventory/data/items.lua, including its grid size. Keep matching framework item definitions if other scripts read them. TSS does not automatically copy qb-core/shared/items.lua or existing database items.
+Stop the inventory you are replacing. Start item-effect scripts after tss-inventory. Define their items and sizes in tss-inventory/data/items.lua. Existing inventories are not imported automatically.
 
-## QBCore: HasItem
+## 2. Replace QBCore HasItem
 
-Files to edit:
-
-- Client: qb-core/client/functions.lua, `QBCore.Functions.HasItem`.
-- Server: qb-core/server/functions.lua, `QBCore.Functions.HasItem`.
-
-Paste this small helper above HasItem in both files. It supports a name, a list of names, or a map of names to required amounts.
-
-```lua
-local function hasRequiredItems(requirements, amount, getCount)
-    local requested = {}
-    if type(requirements) == 'string' then
-        requested[requirements] = amount or 1
-    elseif type(requirements) == 'table' then
-        for itemKey, value in pairs(requirements) do
-            local itemName = type(itemKey) == 'number' and value or itemKey
-            local required = type(itemKey) == 'number' and (amount or 1) or value
-            if type(itemName) ~= 'string' then return false end
-            requested[itemName] = required
-        end
-    else
-        return false
-    end
-    if not next(requested) then return false end
-    for itemName, required in pairs(requested) do
-        if type(required) ~= 'number' or required < 1 or required % 1 ~= 0
-            or getCount(itemName) < required then return false end
-    end
-    return true
-end
-```
-
-Replace the **client** function with:
+In **qb-core/client/functions.lua**, replace `QBCore.Functions.HasItem`:
 
 ```lua
 function QBCore.Functions.HasItem(items, amount)
     if GetResourceState('tss-inventory') ~= 'started' then return false end
-    local inventory = exports['tss-inventory']:GetLocalInventory()
-    if type(inventory) ~= 'table' then return false end
-    return hasRequiredItems(items, amount, function(itemName)
-        local count = 0
-        for _, item in ipairs(inventory.items) do
-            if item.name == itemName then count = count + item.amount end
-        end
-        return count
-    end)
+    return exports['tss-inventory']:HasItem(items, amount)
 end
 ```
 
-Replace the **server** function with:
+In **qb-core/server/functions.lua**, replace `QBCore.Functions.HasItem`:
 
 ```lua
 function QBCore.Functions.HasItem(playerSource, items, amount)
     if GetResourceState('tss-inventory') ~= 'started' then return false end
-    local inventory = exports['tss-inventory']:GetPlayerInventory(playerSource)
-    if type(inventory) ~= 'table' then return false end
-    return hasRequiredItems(items, amount, function(itemName)
-        return exports['tss-inventory']:GetItemCount(inventory.id, itemName)
-    end)
+    return exports['tss-inventory']:HasItem(playerSource, items, amount)
 end
 ```
 
-These check the personal grid. Extra slots and backpack contents are separate inventories; these simple replacements do not flatten them into QBCore slots. Client checks are informational; use the server check before granting an effect or reward.
+These accept an item name, a list, or amounts such as `{bandage=2}`. They check the personal inventory. Check items on the server before granting an effect or reward.
 
-## QBCore: usable items
+## 3. Replace QBCore item-use functions
 
-For each script registering an item, edit its **server.lua**. Replace its QBCore CreateUseableItem registration with the TSS export and keep the existing effect logic inside the callback:
+In **qb-core/server/functions.lua**, replace these functions:
 
 ```lua
-exports['tss-inventory']:RegisterUsableItem('bandage', function(playerSource, item, inventoryId)
-    -- item is read from the real inventory, not supplied by a client.
-    local removed = exports['tss-inventory']:RemoveItem(inventoryId, item.id, 1)
-    if not removed then return end
+function QBCore.Functions.CreateUseableItem(itemName, callback)
+    QBCore.UsableItems[itemName] = callback
+    return exports['tss-inventory']:CreateUsableItem(itemName, callback, GetInvokingResource())
+end
 
-    -- Your existing effect event goes here.
-    -- TriggerClientEvent('your-resource:applyBandage', playerSource)
+function QBCore.Functions.CanUseItem(itemName)
+    return exports['tss-inventory']:GetUsableItem(itemName)
+end
+
+function QBCore.Functions.UseItem(playerSource, item)
+    return exports['tss-inventory']:UseItem(playerSource, item)
+end
+```
+
+Existing callbacks receive `slot` and `info`, along with `id` and `metadata`. Remove consumed items once, on the server. Keep the deprecated client-callable QBCore AddItem/RemoveItem events disabled.
+
+## 4. Add QBCore player item functions
+
+In **qb-core/server/player.lua**, put these inside `QBCore.Player.CreatePlayer`, alongside the other `self.Functions` methods:
+
+```lua
+function self.Functions.AddItem(itemName, amount, slot, info, reason)
+    return exports['tss-inventory']:AddItem(self.PlayerData.source, itemName, amount or 1, slot, info, reason)
+end
+
+function self.Functions.RemoveItem(itemName, amount, slot, reason)
+    return exports['tss-inventory']:RemoveItem(self.PlayerData.source, itemName, amount or 1, slot, reason)
+end
+
+function self.Functions.GetItemByName(itemName)
+    return exports['tss-inventory']:GetItemByName(self.PlayerData.source, itemName)
+end
+
+function self.Functions.GetItemBySlot(slot)
+    return exports['tss-inventory']:GetItemBySlot(self.PlayerData.source, slot)
+end
+```
+
+Use these for online players. Pass false or nil for automatic item placement. A supplied slot is an existing item stack, not an empty grid cell.
+
+In the same file, skip the qb-inventory LoadInventory/SaveInventory calls when using TSS. TSS loads and saves its own data. Replace scripts reading `PlayerData.items` directly with the item getter exports.
+
+## Register an item directly
+
+In your item-effect script's server file:
+
+```lua
+exports['tss-inventory']:CreateUsableItem('bandage', function(playerSource, item, inventoryId)
+    if not exports['tss-inventory']:RemoveItem(inventoryId, item.id, 1) then return end
+    -- Apply the effect here.
 end)
 ```
 
-The callback receives `item.id` and `item.metadata`. For an existing callback expecting QBCore's fields, set `item.slot = item.id` and `item.info = item.metadata` before calling it. Pass inventoryId through to consumption logic when the item can come from an extra slot or carried container.
+Restart the registering script after restarting tss-inventory.
 
-Do not consume the item twice: if the existing callback already removes it, replace that removal rather than adding another one. Restart the registering scripts after restarting tss-inventory so their callbacks register again.
+## Move scripts from qb-inventory
 
-Your current `qb-core/server/functions.lua` also has `QBCore.Functions.UseItem` forwarding to qb-inventory. There is currently **no TSS UseItem export** to substitute there. Item use from the TSS UI and private item keys already dispatches RegisterUsableItem callbacks. Port scripts that call the old UseItem function to this registration/callback approach; do not reactivate the deprecated client-callable QBCore AddItem/RemoveItem events.
+Change `exports['qb-inventory']` to `exports['tss-inventory']` for the supported calls listed in [exports.md](exports.md).
 
-## QBCore: add/remove calls and saving
-
-For a script using Player.Functions.AddItem/RemoveItem, replace those calls in that script's server file with:
-
-```lua
-local inventory = exports['tss-inventory']:GetPlayerInventory(playerSource)
-if type(inventory) ~= 'table' then return end
-
-local added = exports['tss-inventory']:AddItem(inventory.id, 'water_bottle', 1, {})
-local removed = exports['tss-inventory']:RemoveItemsByName(inventory.id, 'water_bottle', 1)
-```
-
-If these calls must remain unchanged across many scripts, their wrappers belong inside `QBCore.Player.CreatePlayer` in qb-core/server/player.lua. Map AddItem to the AddItem export and RemoveItem to RemoveItemsByName, resolving that player's TSS inventory ID first. TSS item IDs identify instances, not numbered QBCore grid cells.
-
-In the same file, remove/skip qb-inventory LoadInventory/SaveInventory calls when running TSS. TSS loads and saves its own tables through modules/inventory/database.lua. Do not copy an empty PlayerData.items cache into TSS or call qb-inventory simply because its folder exists. A full PlayerData.items mirror is not included in these small replacements.
+- AddItem and RemoveItem accept player server IDs.
+- A slot identifies an item stack. Use MoveItem for grid coordinates.
+- GetSlots counts used/free cells, including multi-cell items.
+- Supply shop coordinates when using CreateShop.
+- LoadInventory, SaveInventory, SetInventory, RemoveInventory, OpenInventoryById and QB hook/listener calls need separate changes; changing the resource name is not enough.
 
 ## Qbox
 
-Use the Qbox bridge setting above. For scripts you control, replace direct ox_inventory item operations with the same TSS exports shown above. Usable callbacks should register through TSS or tss_bridge.Inventory.CreateUsableItem.
+Set `tss_framework` to `qbox`. Replace ox_inventory calls in your scripts with the matching TSS exports in exports.md.
 
-Stock Qbox code also makes ox_inventory-specific calls, including inventory-backed money accounts. Review qbx_core/server/player.lua and its QB compatibility files before removing ox_inventory. Selecting the bridge adapter alone does not replace those calls. This guide does not claim drop-in Qbox core compatibility or change your Qbox files.
+Before removing ox_inventory, check **qbx_core/server/player.lua** and Qbox's QB bridge files for remaining inventory and money calls. These instructions do not replace those core calls automatically.
 
 ## ESX
 
-Use the ESX bridge setting above. Replace script calls such as xPlayer.getInventoryItem/addInventoryItem/removeInventoryItem with GetItemCount/AddItem/RemoveItemsByName after resolving the player's TSS inventory. Register usable callbacks through TSS as shown above.
+Set `tss_framework` to `esx`. Replace your scripts' xPlayer item checks, additions and removals with TSS HasItem, AddItem and RemoveItem calls using the player server ID. Register effects with CreateUsableItem.
 
-Native ESX inventory methods, its inventory cache and persistence need explicit forwarding if you want old scripts to remain unchanged. Do not assume setting Config.CustomInventory to a made-up value enables TSS: current ESX instructions leave it false for other inventories unless their integration specifies otherwise. This guide does not change ESX files or install a custom inventory override.
+To keep existing ESX scripts unchanged, edit the corresponding xPlayer item methods to call TSS. Leave `Config.CustomInventory` at its documented default unless your ESX integration requires another setting. Selecting the bridge does not redirect ESX's item methods or saved inventory.
 
-## Check after your edits
+## Check the setup
 
-Restart in dependency order, then test HasItem for single names, lists and amount maps; use and consume one registered item; reconnect to confirm persistence. Keep the old inventory's database until you have a separate, verified data-conversion plan. TSS does not automatically import qb/ox/ESX records.
-
-Framework references: [Qbox player implementation](https://github.com/Qbox-project/qbx_core/blob/main/server/player.lua), [ESX inventory configuration](https://github.com/esx-framework/esx_core/blob/main/%5Bcore%5D/es_extended/shared/config/main.lua).
+Restart in dependency order. Test adding, removing, checking and using an item, then reconnect to confirm it saved. Keep the old inventory tables until any item-data conversion is finished.

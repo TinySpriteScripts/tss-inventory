@@ -1,8 +1,7 @@
 Config = Config or {}
 Config.TSS = {}
-Config.MaxDimension = 40
-Config.MaxCells = 800
-Config.MaxMetadataBytes = 8192
+Config.MaxDimension = 100
+Config.MaxCells = 10000
 Config.DynamicContainerWeight = true -- carried containers and equipped slots share the player weight
 Config.MaxTransferDistance = 3.0 -- reserved for future world interactions
 Config.CellSize = 48 -- identical for every inventory; overflow scrolls

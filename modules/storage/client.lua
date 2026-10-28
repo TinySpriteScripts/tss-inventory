@@ -1,15 +1,31 @@
 local bridge = exports.tss_bridge:GetModules({ 'Targets', 'Notify' }, Config.TSS)
-local loadedVehicles, vehicleModules = pcall(function()
-    return exports.tss_bridge:GetModules({ 'Vehicles' }, Config.TSS)
-end)
-bridge.Vehicles = loadedVehicles and vehicleModules.Vehicles or nil
-local vehicleBridgeReady = bridge.Vehicles ~= nil
-for _, methodName in ipairs({ 'Nearby', 'Current', 'Inspect', 'TrunkPosition' }) do
-    if not bridge.Vehicles or type(bridge.Vehicles[methodName]) ~= 'function' then vehicleBridgeReady = false end
+local function isBridgeFunction(callback)
+    return type(callback) == 'function'
+        or (type(callback) == 'table' and rawget(callback, '__cfx_functionReference') ~= nil)
 end
-if not vehicleBridgeReady then
-    print('[tss-inventory] Vehicle storage unavailable: restart updated tss_bridge, then tss-inventory. Personal inventory remains available.')
+
+local vehicleBridgeReady = false
+
+local function ensureVehicleBridge()
+    if vehicleBridgeReady then return true end
+
+    local loadedVehicles, vehicleModules = pcall(function()
+        return exports.tss_bridge:GetModules({ 'Vehicles' }, Config.TSS)
+    end)
+    local vehicles = loadedVehicles and type(vehicleModules) == 'table' and vehicleModules.Vehicles
+    if not vehicles then return false end
+
+    for _, methodName in ipairs({ 'Nearby', 'Current', 'Inspect', 'TrunkPosition' }) do
+        if not isBridgeFunction(vehicles[methodName]) then return false end
+    end
+
+    bridge.Vehicles = vehicles
+    vehicleBridgeReady = true
+    return true
 end
+
+ensureVehicleBridge()
+
 local targetedVehicles = {}
 
 local function showNotice(message)
@@ -17,7 +33,7 @@ local function showNotice(message)
 end
 
 local function trunkIsNearby(vehicle)
-    if not vehicleBridgeReady then return false end
+    if not ensureVehicleBridge() then return false end
     if bridge.Vehicles.Current() then return false end
     local info = bridge.Vehicles.Inspect(vehicle)
     if not info or info.locked then return false end
@@ -28,7 +44,7 @@ local function trunkIsNearby(vehicle)
 end
 
 local function requestVehicle(vehicle, compartment)
-    if not vehicleBridgeReady then return showNotice('Vehicle bridge needs updating') end
+    if not ensureVehicleBridge() then return showNotice('Vehicle storage is temporarily unavailable') end
     local info = bridge.Vehicles.Inspect(vehicle)
     if not info or info.networkId <= 0 then return showNotice('Vehicle is unavailable') end
     TriggerServerEvent('tss-inventory:openVehicle', info.networkId, compartment)
@@ -37,7 +53,7 @@ end
 TSSInventoryClient = TSSInventoryClient or {}
 
 function TSSInventoryClient.NearbyTrunkNetworkId()
-    if not vehicleBridgeReady then return nil end
+    if not ensureVehicleBridge() then return nil end
     if bridge.Vehicles.Current() then return nil end
     local nearestNetworkId, nearestDistance
     local playerPosition = GetEntityCoords(PlayerPedId())
@@ -54,8 +70,8 @@ function TSSInventoryClient.NearbyTrunkNetworkId()
 end
 
 CreateThread(function()
-    if not vehicleBridgeReady then return end
     while true do
+        while not ensureVehicleBridge() do Wait(1500) end
         local nearbyVehicles = {}
         for _, vehicle in ipairs(bridge.Vehicles.Nearby(Config.VehicleStorage.targetScanDistance)) do
             nearbyVehicles[vehicle] = true

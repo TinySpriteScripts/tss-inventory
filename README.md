@@ -46,21 +46,21 @@ All server/client exports, container creation, settings, drops and shops are doc
 
 ## Admin commands
 
-Use native FiveM ACE permissions: each command is registered as restricted. Assign the desired `command.inv...` permissions to your admin principal, or use an existing inherited `command` grant. TAB's regular inv command remains unrestricted.
+Admin commands use FiveM ACE permissions through tss_bridge. An existing `command` grant allows all commands, or grant individual permissions such as `command.additem`. Command descriptions and arguments appear in tss-chat for authorised admins. TAB and `/inv` remain available to everyone. Inventory arguments accept an inventory ID, an online player ID, or `self`.
 
-- `invhelp`: show command syntax.
-- `invadditem <player ID> <item name> [amount]`
-- `invremoveitem <inventory ID/self> <item ID> [amount]`
-- `invcreate <inventory ID> [type]`
-- `invopen [inventory ID/self]`
-- `invresize <inventory ID/self> <columns> <rows>`
-- `invmeta <inventory ID/self> <JSON object>`
-- `invitemmeta <inventory ID/self> <item ID> <JSON object>`
-- `invinspect [inventory ID/self]`
+- `inventoryhelp`: show command syntax.
+- `additem <player ID> <item name> [amount]`
+- `removeitem <inventory ID/self> <item ID> [amount]`
+- `createinventory <inventory ID> [type]`
+- `openinventory [inventory ID/self]`
+- `resizeinventory <inventory ID/self> <columns> <rows>`
+- `setinventorymetadata <inventory ID/self> <JSON object>`
+- `setitemmetadata <inventory ID/self> <item ID> <JSON object>`
+- `inspectinventory [inventory ID/self]`
 
-For example `invadditem 1 radio 1`, then open with TAB. TAB opens your inventory plus the glovebox while seated, or a nearby unlocked trunk when standing at its rear. Vehicle targets remain available. First access creates persistent storage keyed by plate. Configure all 23 classes and model overrides in data/vehicles.lua; add custom model classes there or in data/vehicle_models.lua.
+For example `additem 1 radio 1`, then open with TAB. TAB opens your inventory plus the glovebox while seated, or a nearby unlocked trunk when standing at its rear. Vehicle targets remain available. First access creates persistent storage keyed by plate. Configure all 23 classes and model overrides in data/vehicles.lua; add custom model classes there or in data/vehicle_models.lua.
 
-Give yourself `wallet` or `backpack` with invadditem, then double-click or right-click Use. Each gets a unique persistent container. Wallets accept cards/cash; backpacks accept wallets but exclude other backpacks by default.
+Give yourself `wallet` or `backpack` with additem, then double-click or right-click Use. Each gets a unique persistent container. Wallets accept cards/cash; backpacks accept wallets but exclude other backpacks by default.
 
 Shops use size={x=8}; height is calculated from footprints with a minimum of two rows. Legacy shop y values are ignored.
 
@@ -95,3 +95,7 @@ Shift + left-click moves the full item/stack between the player and the last int
 Usable items have Keybind in their context menu. Click it, then press a keyboard key; ESC cancels capture. A bound item shows Unbind key instead. Bindings are per character and item type, saved in the personal inventory settings JSON, so splitting or transferring stacks does not change the binding. One key targets one item type; rebinding replaces its previous assignment. Pressing it uses a matching carried item, including items in equipped slots or carried containers. Backpack/wallet keys open their storage.
 
 Item keys use raw keyboard state while the inventory is closed and NUI key events while open. They do not add FiveM key mappings or console binds. Held keys do not repeat and chat/focused UI/pause input is ignored. Game controls themselves are not remapped. No table wipe is needed.
+
+## Migrating other scripts
+
+The common qb-inventory-style exports are available without a framework layer: HasItem (client/server), CanAddItem, item getters, usable registration/UseItem, metadata, weight/slot helpers and clears. AddItem/RemoveItem accept player-ID forms as well as native TSS inventory-ID forms. See exports.md for exact signatures and grid differences, and migration.md for small manual core-function replacements. No framework source is modified automatically.

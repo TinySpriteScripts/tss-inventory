@@ -49,6 +49,27 @@ function inventoryCore.definition(itemName)
     return definition
 end
 
+-- Resolve display labels on copies; shared item definitions stay unchanged.
+function inventoryCore.itemDefinition(item)
+    local definition = inventoryCore.definition(item.name)
+    if definition then definition.label = TSSItemExports.Label(item.metadata, definition.label or item.name) end
+    return definition
+end
+
+function inventoryCore.itemView(item)
+    local result = inventoryCore.copy(item)
+    local definition = inventoryCore.definition(item.name)
+    result.label = TSSItemExports.Label(item.metadata, definition and definition.label or item.name)
+    return result
+end
+
+function inventoryCore.inventoryView(inventory)
+    local result = inventoryCore.copy(inventory)
+    result.label = TSSItemExports.Label(inventory.metadata, inventory.label)
+    for itemIndex, item in ipairs(inventory.items) do result.items[itemIndex] = inventoryCore.itemView(item) end
+    return result
+end
+
 function inventoryCore.allowed(inventory, itemName)
     local function listContains(itemList)
         for _, listedName in ipairs(itemList or {}) do if listedName == itemName then return true end end
