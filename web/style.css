@@ -1,0 +1,533 @@
+:root {
+  --red: #d94a50;
+  --cell: 48px;
+  color-scheme: normal;
+  background: transparent;
+  font:
+    13px Arial,
+    sans-serif;
+  color: #eee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: transparent !important;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+button:hover {
+  color: var(--red);
+}
+
+#inventory,
+#workspace {
+  position: fixed;
+  inset: 0;
+}
+
+#inventory {
+  background: transparent;
+}
+
+.window {
+  position: absolute;
+  min-width: 220px;
+  background: rgba(15, 17, 19, 0.85);
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  min-width: 0;
+  overflow: hidden;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid var(--red);
+  cursor: grab;
+  user-select: none;
+}
+
+.title {
+  min-width: 0;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.controls {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  padding-right: 5px;
+}
+
+.controls button {
+  width: 25px;
+  height: 28px;
+  font-size: 17px;
+}
+
+.body {
+  padding: 8px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.grid {
+  position: relative;
+  flex-shrink: 0;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+  border-right: 1px solid #ffffff1a;
+  border-bottom: 1px solid #ffffff1a;
+}
+
+.item {
+  position: absolute;
+  background: rgba(37, 40, 43, 0.94);
+  border: 1px solid #ffffff17;
+  cursor: grab;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.item:hover,
+.item.selected {
+  border-color: var(--red);
+  background: rgba(55, 34, 37, 0.96);
+}
+
+.item img {
+  width: 82%;
+  height: 80%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.item .fallback {
+  font-size: 11px;
+  padding: 5px;
+  text-align: center;
+}
+
+.amount {
+  position: absolute;
+  bottom: 3px;
+  right: 4px;
+  font-size: 11px;
+  text-shadow: 0 1px 3px #000;
+}
+
+.status {
+  color: #aaa;
+  font-size: 11px;
+  padding: 3px 9px 8px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+
+.capacity-bar {
+  width: 64px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.capacity-fill {
+  height: 100%;
+  background: var(--red);
+}
+
+.window.minimised .body,
+.window.minimised .status {
+  display: none;
+}
+
+.window.docked {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #ffffff18;
+  z-index: 1 !important;
+}
+
+.tabs {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
+  cursor: grab;
+}
+
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 10px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.tab.active {
+  border-bottom-color: var(--red);
+  color: white;
+}
+
+.tab:not(.active) {
+  color: #999;
+}
+
+#docking-slots {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9000;
+}
+
+.docking-slot {
+  position: absolute;
+  border: 1px solid #d94a5088;
+  background: #d94a500a;
+}
+
+.docking-slot.active {
+  border-color: var(--red);
+  background: #d94a5033;
+}
+
+#tooltip,
+#context,
+#dialog {
+  position: fixed;
+  background: rgba(18, 20, 22, 0.98);
+  border: 1px solid #ffffff25;
+  border-top: 2px solid var(--red);
+  z-index: 10000;
+}
+
+#tooltip {
+  width: 240px;
+  padding: 13px;
+  pointer-events: none;
+  line-height: 1.5;
+}
+
+#tooltip h3 {
+  font-size: 14px;
+  margin: 0 0 5px;
+}
+
+#tooltip p {
+  color: #aaa;
+  margin: 5px 0 10px;
+  font-size: 12px;
+}
+
+.detail {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #bbb;
+  font-size: 12px;
+}
+
+.detail span:last-child {
+  text-align: right;
+  overflow-wrap: anywhere;
+  max-width: 150px;
+}
+
+#context {
+  width: 180px;
+  padding: 4px;
+}
+
+#context button {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 9px;
+  border-left: 2px solid transparent;
+}
+
+#context button:hover {
+  background: #d94a5022;
+  border-left-color: var(--red);
+}
+
+#context button:disabled {
+  color: #666;
+  cursor: default;
+}
+
+#dialog {
+  width: 280px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 18px;
+  box-shadow: 0 5px 25px #0005;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+#dialog h3 {
+  margin: 0 0 12px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+#dialog input {
+  width: 100%;
+  padding: 9px;
+  margin: 10px 0;
+  background: #ffffff08;
+  color: white;
+  border: 1px solid #ffffff33;
+}
+
+#dialog .buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+#dialog button {
+  border: 1px solid #ffffff30;
+  padding: 8px 14px;
+}
+
+#dialog .confirm {
+  background: var(--red);
+  color: white;
+  border: 0;
+}
+
+#toast {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #17191bf5;
+  border-top: 2px solid var(--red);
+  padding: 12px 20px;
+  z-index: 20000;
+  max-width: 70vw;
+}
+
+footer {
+  position: fixed;
+  bottom: 8px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  color: #aaa;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+footer button {
+  pointer-events: auto;
+  margin-left: auto;
+}
+
+.item {
+  user-select: none;
+  touch-action: none;
+}
+
+.item.drag-source {
+  opacity: 0.22;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 15000;
+  pointer-events: none;
+  background: rgba(30, 32, 34, 0.6);
+  border: 1px solid #d94a5088;
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drag-ghost img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.drag-ghost.invalid {
+  border-color: #e4a25b;
+}
+
+.placement {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.placement-cell {
+  position: absolute;
+  background: rgba(217, 74, 80, 0.22);
+  border: 1px solid rgba(217, 74, 80, 0.85);
+}
+
+.placement.invalid .placement-cell {
+  background: rgba(228, 162, 91, 0.22);
+  border-color: #e4a25b;
+}
+
+.price {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  color: #ef888d;
+  font-size: 11px;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+.item.sold-out {
+  opacity: 0.4;
+}
+
+.purchase-total {
+  text-align: right;
+  color: #eee;
+  margin: 3px 0 16px;
+  font-size: 14px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: transparent;
+}
+
+/* Thin red scrollbars throughout inventory windows, docks and popups. */
+*::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--red);
+  border: 0;
+  border-radius: 0;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #ed6870;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--red) transparent;
+  }
+}
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.payment-methods {
+  display: flex;
+  gap: 6px;
+  padding-top: 3px;
+}
+
+.payment-button {
+  padding: 5px 13px;
+  border: 1px solid #ffffff25;
+  color: #999;
+  font-size: 11px;
+}
+
+.payment-button[aria-pressed="true"] {
+  border-color: var(--red);
+  color: #eee;
+  background: #d94a501a;
+}
+
+.payment-button:hover {
+  border-color: var(--red);
+  color: #eee;
+}
+
+#dialog h3:active {
+  cursor: grabbing;
+}
