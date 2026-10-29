@@ -154,6 +154,14 @@ function TSSCreateStorageService(context)
         return false
     end
 
+    function storageService.CanUseFrom(playerSource, inventory)
+        if not inventory then return false end
+        if inventory.id == context.identity(playerSource) then return true end
+        if inventory.type == 'extra' then return context.extraAccess(playerSource, inventory.id) end
+        return Config.UseItemsFromContainers == true and inventory.metadata.containerItem ~= nil
+            and carriesContainer(playerSource, inventory.id)
+    end
+
     function storageService.CanAccess(playerSource, inventoryId)
         local inventory = context.load(inventoryId)
         if not inventory then return false end

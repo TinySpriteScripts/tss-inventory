@@ -10,6 +10,7 @@ local playerInventoryIds = {}
 local requestLimits = {}
 local inventoryLocks = {}
 local usableItems = {}
+local activeItemUses = {}
 local operationBusy = false
 local dropService = nil
 local shopService = nil
@@ -533,6 +534,20 @@ end)
 registerExport('RemoveItem', function(identifier, itemId, amount, notification, reason)
     local inventoryId, playerError = resolveInventoryIdentifier(identifier)
     if not inventoryId then return false, playerError end
+    -- Legacy usable handlers often remove by player ID and slot. During that
+    -- handler only, route a matching removal to the stack actually being used.
+    local activeUse = type(identifier) == 'number' and activeItemUses[identifier]
+    if activeUse and Config.UseItemsFromContainers == true
+        and ((type(itemId) == 'string' and itemId == activeUse.itemName
+            and (notification == nil or notification == false or notification == activeUse.itemId))
+            or itemId == activeUse.itemId) then
+        local usedInventory = loadInventory(activeUse.inventoryId)
+        local usedItem = usedInventory and inventoryCore.find(usedInventory, activeUse.itemId)
+        if not storageService.CanUseFrom(identifier, usedInventory) or not usedItem or usedItem.name ~= activeUse.itemName then
+            return false, 'Used item is no longer carried'
+        end
+        inventoryId = activeUse.inventoryId
+    end
     if type(itemId) == 'string' then
         local itemName, slot = itemId, notification
         if slot ~= nil and slot ~= false and not inventoryCore.integer(slot, 1, 1e12) then return false, 'Invalid item slot' end
@@ -881,13 +896,20 @@ end
 
 local function usableItemCallback(playerSource, inventoryId, itemSnapshot, definition, registration)
     return function()
+        local inventory = loadInventory(inventoryId)
+        if not storageService.CanUseFrom(playerSource, inventory) then error('Item is no longer carried') end
         -- Release inventory focus before the item's handler opens its own UI.
         if definition.shouldClose == true then
             sessions[playerSource] = nil
             if attachmentService then attachmentService.Close(playerSource) end
             TriggerClientEvent('tss-inventory:close', playerSource, true)
         end
-        return registration.handler(playerSource, itemSnapshot, inventoryId)
+        local previousUse = activeItemUses[playerSource]
+        activeItemUses[playerSource] = { inventoryId = inventoryId, itemId = itemSnapshot.id, itemName = itemSnapshot.name }
+        local succeeded, result = pcall(registration.handler, playerSource, itemSnapshot, inventoryId)
+        activeItemUses[playerSource] = previousUse
+        if not succeeded then error(result) end
+        return result
     end
 end
 
@@ -974,7 +996,10 @@ local function handleAction(playerSource, request)
     if request.kind == 'use' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
         local definition = item and inventoryCore.definition(item.name)
-        if weaponService and weaponService.IsWeapon(item) then return weaponService.Use(playerSource, sourceInventory, item) end
+        if weaponService and weaponService.IsWeapon(item) then
+            if not storageService.CanUseFrom(playerSource, sourceInventory) then return false, 'Use items from your own inventory' end
+            return weaponService.Use(playerSource, sourceInventory, item)
+        end
         if definition and definition.container then
             local opened, openError = storageService.OpenItem(playerSource, sourceInventory, request.itemId)
             if opened and definition.shouldClose == true then
@@ -984,8 +1009,7 @@ local function handleAction(playerSource, request)
             end
             return opened, openError
         end
-        if sourceInventory.id ~= playerInventoryIds[playerSource]
-            and not (sourceInventory.type == 'extra' and extraInventoryService.CanAccess(playerSource, sourceInventory.id)) then return false, 'Use items from your own inventory' end
+        if not storageService.CanUseFrom(playerSource, sourceInventory) then return false, 'Use items from your own inventory' end
         local registration = item and usableItems[item.name]
         if not definition or not definition.useable or not registration then return false, 'Item cannot be used' end
         local itemSnapshot = inventoryCore.itemView(item)
@@ -1082,6 +1106,9 @@ local function prepareCarriedUse(playerSource, selector)
     if not item then return false, playerError or 'Item is not carried' end
     local definition = inventoryCore.definition(item.name)
     if not definition or not definition.useable then return false, 'Item cannot be used' end
+    if not definition.container and not storageService.CanUseFrom(playerSource, sourceInventory) then
+        return false, 'Use items from your own inventory'
+    end
     if weaponService and weaponService.IsWeapon(item) then return weaponService.Use(playerSource, sourceInventory, item) end
     if definition.container then
         local opened, openError = openInventory(playerSource, sourceInventory.id)

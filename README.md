@@ -66,6 +66,8 @@ Give yourself `wallet` or `backpack` with additem, then double-click or right-cl
 
 Drag an allowed item onto a carried container's icon to store it without opening its window. Item rules, capacity, weight and nesting are checked on the server. Use the repack button in an inventory title bar to compact its grid; it tries several layouts and keeps the best result without changing item IDs, amounts or metadata. Shop catalogues cannot be repacked by players.
 
+`Config.UseItemsFromContainers = true` allows item use inside carried backpacks, wallets and nested containers, including containers in extra slots. It applies to window actions, usable-item exports and item keybinds. Stashes, vehicle compartments and containers the player is not carrying are excluded. Set it to `false` to restrict item use to the main inventory and extra slots; opening carried containers still works.
+
 Shops use size={x=8}; height is calculated from footprints with a minimum of two rows. Legacy shop y values are ignored.
 
 ## Verification

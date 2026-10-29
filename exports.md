@@ -157,6 +157,8 @@ An item ID identifies a stack. Split it first to rename just one unit. Different
 
 Define the item in data/items.lua before registering it. Set `useable=false` to disable use. Callbacks do not remove items automatically.
 
+With `Config.UseItemsFromContainers = true`, usable items may come from carried containers. Use the callback's `inventoryId` when removing the item, especially after a timer or client event. Matching player-ID/slot removals made directly inside the callback also use the selected container stack.
+
 ```lua
 inventory:CreateUsableItem('bandage', function(playerSource, item, inventoryId)
     if not inventory:RemoveItem(inventoryId, item.id, 1) then return end

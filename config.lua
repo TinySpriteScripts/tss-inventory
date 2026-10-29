@@ -6,6 +6,7 @@ Config.MoneyAsItem = true -- cash carried in player inventories, extra slots and
 Config.MaxDimension = 100
 Config.MaxCells = 10000
 Config.DynamicContainerWeight = true -- carried containers and equipped slots share the player weight
+Config.UseItemsFromContainers = true -- allow using items inside carried containers, including nested containers
 Config.CleanUpEmptyInventories = true -- remove empty non-player database inventories once at startup (RECOMMENDED TRUE)
 Config.MaxTransferDistance = 3.0 -- reserved for future world interactions
 Config.CellSize = 48 -- identical for every inventory; overflow scrolls
