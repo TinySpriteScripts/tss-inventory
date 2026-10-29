@@ -14661,6 +14661,99 @@
     )?.id || null;
   }
 
+  // src/sounds.js
+  var audioContext = null;
+  var noiseBuffer = null;
+  var lastSoundTime = -Infinity;
+  var configuration = { enabled: false, volume: 0.2, actions: {} };
+  var preferences = {};
+  function volume(value, fallback) {
+    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+  }
+  function configureSounds(settings, playerPreferences) {
+    if (settings) configuration = { ...settings, volume: volume(settings.volume, 0.2) };
+    if (playerPreferences) preferences = playerPreferences;
+  }
+  function unlockAudio() {
+    if (!configuration.enabled) return;
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioContext) audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") void audioContext.resume().catch(() => {
+      });
+    } catch {
+    }
+  }
+  window.addEventListener("pointerdown", unlockAudio, { passive: true });
+  window.addEventListener("keydown", unlockAudio, { passive: true });
+  function tone(startTime, frequency, endFrequency, duration, level, waveform = "sine") {
+    const oscillator = audioContext.createOscillator();
+    const envelope = audioContext.createGain();
+    oscillator.type = waveform;
+    oscillator.frequency.setValueAtTime(frequency, startTime);
+    oscillator.frequency.exponentialRampToValueAtTime(endFrequency, startTime + duration);
+    envelope.gain.setValueAtTime(0, startTime);
+    envelope.gain.linearRampToValueAtTime(level, startTime + 4e-3);
+    envelope.gain.exponentialRampToValueAtTime(1e-5, startTime + duration);
+    oscillator.connect(envelope);
+    envelope.connect(audioContext.destination);
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      envelope.disconnect();
+    };
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration);
+  }
+  function click(startTime, duration, level, cutoff) {
+    if (!noiseBuffer) {
+      noiseBuffer = audioContext.createBuffer(1, Math.ceil(audioContext.sampleRate * 0.1), audioContext.sampleRate);
+      const samples = noiseBuffer.getChannelData(0);
+      for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) samples[sampleIndex] = Math.random() * 2 - 1;
+    }
+    const noise = audioContext.createBufferSource();
+    const filter = audioContext.createBiquadFilter();
+    const envelope = audioContext.createGain();
+    noise.buffer = noiseBuffer;
+    filter.type = "lowpass";
+    filter.frequency.value = cutoff;
+    envelope.gain.setValueAtTime(0, startTime);
+    envelope.gain.linearRampToValueAtTime(level, startTime + 2e-3);
+    envelope.gain.exponentialRampToValueAtTime(1e-5, startTime + duration);
+    noise.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(audioContext.destination);
+    noise.onended = () => {
+      noise.disconnect();
+      filter.disconnect();
+      envelope.disconnect();
+    };
+    noise.start(startTime);
+    noise.stop(startTime + duration);
+  }
+  function playInventorySound(action, previewPreferences = null) {
+    const selectedPreferences = previewPreferences || preferences;
+    const level = volume(selectedPreferences.soundVolume, configuration.volume);
+    if (!configuration.enabled || configuration.actions?.[action] === false || selectedPreferences.soundMuted || level === 0) return;
+    unlockAudio();
+    if (!audioContext || audioContext.state !== "running") return;
+    const startTime = audioContext.currentTime;
+    if (startTime - lastSoundTime < 0.045) return;
+    lastSoundTime = startTime;
+    try {
+      if (action === "move") click(startTime, 0.035, level * 0.3, 1800);
+      else if (action === "equip") {
+        click(startTime, 0.025, level * 0.22, 1400);
+        click(startTime + 0.04, 0.035, level * 0.3, 2200);
+        tone(startTime + 0.035, 240, 180, 0.055, level * 0.09, "triangle");
+      } else if (action === "purchase") {
+        tone(startTime, 660, 660, 0.1, level * 0.14);
+        tone(startTime + 0.065, 880, 880, 0.14, level * 0.12);
+      } else if (action === "reject") tone(startTime, 160, 105, 0.085, level * 0.12);
+    } catch {
+    }
+  }
+
   // src/crafting.js
   function planCraft(inventory, sourceItem, targetItem) {
     if (!inventory.isOwn || inventory.type !== "player" || sourceItem.id === targetItem.id || sourceItem.name === targetItem.name || sourceItem.metadata?.containerId || targetItem.metadata?.containerId) return null;
@@ -14699,7 +14792,6 @@
   var subscribers = /* @__PURE__ */ new Set();
   var storeVersion = 0;
   var hoverTimeout = null;
-  var noticeTimeout = null;
   var nextItemBoxId = 0;
   var dragAnimationFrame = null;
   var pressedItem = null;
@@ -14718,6 +14810,8 @@
   var inventoryState = {
     isOpen: false,
     inventories: [],
+    nearbyPlayers: [],
+    sounds: { enabled: false, volume: 0.2, actions: {} },
     visibleMetadata: {},
     rarity: { enable: false, tiers: {} },
     weaponSystemEnabled: false,
@@ -14730,6 +14824,7 @@
     layouts: {},
     activeTabs: {},
     paymentMethods: {},
+    activeShopId: null,
     cellSize: 48,
     frontOrder: 10,
     isRequestPending: false,
@@ -14745,7 +14840,6 @@
     tooltip: null,
     contextMenu: null,
     dialog: null,
-    notice: null,
     itemBoxes: [],
     playerSettings: { notificationPosition: "middle-right" },
     settingsOpen: false,
@@ -14911,13 +15005,7 @@
     ) : null;
   }
   function showNotice(message) {
-    inventoryState.notice = message;
-    clearTimeout(noticeTimeout);
-    noticeTimeout = setTimeout(() => {
-      inventoryState.notice = null;
-      publishChanges();
-    }, 3500);
-    publishChanges();
+    if (typeof message === "string" && message.length) void sendNuiRequest("notify", { message });
   }
   async function sendNuiRequest(route, payload = {}) {
     if (isBrowserPreview) {
@@ -14957,14 +15045,55 @@
         itemId: item?.id,
         ...details
       });
-      if (!response.ok) showNotice(response.message || "Action refused");
-      else if (actionKind === "buy" && response.message)
-        showNotice(response.message);
+      if (!response.ok) {
+        playInventorySound("reject");
+        showNotice(response.message || "Action refused");
+      } else {
+        if (["move", "quickMove", "storeInContainer", "repack"].includes(actionKind)) playInventorySound("move");
+        else if (actionKind === "buy" || actionKind === "sell") playInventorySound("purchase");
+        else if (["equipClothing", "unequipClothing", "installAttachment", "removeAttachment"].includes(actionKind) || actionKind === "use" && (item?.definition.weapon || item?.definition.clothingSlot)) playInventorySound("equip");
+        if ((actionKind === "buy" || actionKind === "sell") && response.message) showNotice(response.message);
+      }
     } finally {
       inventoryState.isRequestPending = false;
       if (actionKind === "craft") inventoryState.craftingPending = false;
       publishChanges();
     }
+  }
+  var givingPreviewRequests = Promise.resolve();
+  function canGiveFromInventory(inventory) {
+    return Boolean(inventory && (inventory.type === "player" && inventory.isOwn !== false || inventory.isPlayerExtra || inventory.metadata?.containerItem));
+  }
+  function setGivingPreview(active) {
+    if (!active) inventoryState.nearbyPlayers = [];
+    givingPreviewRequests = givingPreviewRequests.catch(() => {
+    }).then(() => sendNuiRequest("givingPreview", { active }));
+  }
+  function getSellOffer(inventory, item, shopId = inventoryState.activeShopId) {
+    if (!canGiveFromInventory(inventory) || !item) return null;
+    const shop = shopId ? findInventory(shopId) : inventoryState.inventories.find((candidate) => candidate.type === "shop");
+    const product = shop?.items.find((candidate) => candidate.name === item.name && candidate.canSell && Number.isFinite(candidate.sellPrice));
+    return product ? { shop, product } : null;
+  }
+  function sellItem(inventory, item, amount = Math.min(item.amount, 1e3), shopId) {
+    const offer = getSellOffer(inventory, item, shopId);
+    if (!offer) return showNotice("This shop does not buy that item");
+    return requestItemAction(inventory, item, "sell", {
+      to: offer.shop.id,
+      targetRevision: offer.shop.revision,
+      amount,
+      account: getPaymentMethod(offer.shop)
+    });
+  }
+  function openSaleDialog(inventory, item) {
+    const offer = getSellOffer(inventory, item);
+    if (!offer) return;
+    openQuantityDialog(inventory, item, false, "sale");
+    inventoryState.dialog.shopId = offer.shop.id;
+    publishChanges();
+  }
+  function giveItemToClosest(inventory, item) {
+    return requestItemAction(inventory, item, "give", { amount: item.amount });
   }
   function repackInventory(inventory) {
     return requestItemAction(inventory, null, "repack");
@@ -15124,6 +15253,7 @@
     publishChanges();
   }
   function openQuantityDialog(inventory, item, isPurchase = false, dialogKind = null) {
+    if (isPurchase && item.canBuy === false) return;
     if (isPurchase && item.stock === 0) return showNotice("Out of stock");
     clearPopups();
     inventoryState.dialog = {
@@ -15164,10 +15294,14 @@
     );
     if (!item) return closeQuantityDialog();
     const quantity = Number(dialog.quantity);
-    const maximum = dialog.kind === "purchase" ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : item.amount;
+    const maximum = dialog.kind === "purchase" ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : dialog.kind === "sale" ? Math.min(1e3, item.amount) : item.amount;
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > maximum)
       return showNotice("Enter a valid quantity");
     closeQuantityDialog();
+    if (dialog.kind === "sale") {
+      sellItem(inventory, item, quantity, dialog.shopId);
+      return;
+    }
     if (dialog.kind === "drop") {
       requestItemAction(inventory, item, "drop", { amount: quantity });
       return;
@@ -15188,6 +15322,10 @@
     });
   }
   function touchInventory(inventory) {
+    if (inventory.type === "shop") {
+      inventoryState.activeShopId = inventory.id;
+      publishChanges();
+    }
     if (!(inventory.type === "player" && inventory.isOwn !== false))
       inventoryState.lastTouchedInventoryId = inventory.id;
   }
@@ -15268,6 +15406,19 @@
     const drag = inventoryState.drag;
     const pointer = inventoryState.pointer;
     const pointerElement = document.elementFromPoint(pointer.x, pointer.y);
+    const isOpenSpace = pointerElement?.closest("#inventory") && !pointerElement.closest(".window, .weapon-inspection, #dialog, #context, footer");
+    if (drag && isOpenSpace && canGiveFromInventory(findInventory(drag.inventoryId))) {
+      let closestTarget = null;
+      let closestDistance = 32;
+      for (const target of inventoryState.nearbyPlayers) {
+        const distance = Math.hypot(pointer.x - target.x * innerWidth, pointer.y - target.y * innerHeight);
+        if (distance <= closestDistance) {
+          closestTarget = target;
+          closestDistance = distance;
+        }
+      }
+      if (closestTarget) return { giveTarget: closestTarget.id, isValid: true };
+    }
     const clothingElement = pointerElement?.closest("[data-clothing-slot]");
     if (clothingElement && inventoryState.clothingEnabled && inventoryState.clothing?.inventory) {
       const item2 = getDraggedItem();
@@ -15304,6 +15455,22 @@
     const item = getDraggedItem();
     if (!drag || !inventory || !item) return null;
     const gridBounds = gridElement.getBoundingClientRect();
+    if (inventory.type === "shop") {
+      const offer = getSellOffer(findInventory(drag.inventoryId), item, inventory.id);
+      const product = offer?.product;
+      const footprint = product ? getItemFootprint(product) : { x: 1, y: 1 };
+      const column2 = product?.x || 1;
+      const row2 = product?.y || 1;
+      return {
+        inventoryId: inventory.id,
+        isSale: true,
+        isValid: Boolean(offer && drag.quantity <= 1e3),
+        reason: offer ? "Sell up to 1000 items at a time" : "This shop does not buy that item",
+        highlight: { x: column2, y: row2, width: footprint.x, height: footprint.y },
+        screenX: gridBounds.left + (column2 - 1) * inventoryState.cellSize,
+        screenY: gridBounds.top + (row2 - 1) * inventoryState.cellSize
+      };
+    }
     const column = Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) + 1 - drag.offsetX;
     const row = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1 - drag.offsetY;
     const hoveredColumn = Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) + 1;
@@ -15411,6 +15578,7 @@
   }
   function beginItemDrag(inventory, item, quantity, offsetX, offsetY) {
     pressedItem = null;
+    if (inventory.type === "shop" && item.canBuy === false) return showNotice("This shop only buys that item");
     if (inventory.type === "shop" && item.stock === 0)
       return showNotice("Out of stock");
     clearPopups();
@@ -15422,10 +15590,12 @@
       offsetY,
       isRotated: item.rotated === true
     };
+    setGivingPreview(canGiveFromInventory(inventory));
     refreshDragPreview();
     dragAnimationFrame = requestAnimationFrame(scrollDuringDrag);
   }
   function cancelItemDrag(shouldPublish = true) {
+    if (inventoryState.drag) setGivingPreview(false);
     stopAttachmentDrag();
     pressedItem = null;
     inventoryState.drag = null;
@@ -15455,8 +15625,22 @@
       }
       return;
     }
-    if (destination.isWeaponInspection && !destination.isValid) return;
-    if (!destination.isValid) return showNotice(destination.reason);
+    if (destination.isWeaponInspection && !destination.isValid) {
+      playInventorySound("reject");
+      return;
+    }
+    if (!destination.isValid) {
+      playInventorySound("reject");
+      return showNotice(destination.reason);
+    }
+    if (destination.isSale) {
+      void sellItem(sourceInventory, item, drag.quantity, destination.inventoryId);
+      return;
+    }
+    if (destination.giveTarget) {
+      void requestItemAction(sourceInventory, item, "give", { targetPlayer: destination.giveTarget, amount: drag.quantity });
+      return;
+    }
     if (destination.clothingSlot) {
       void requestItemAction(sourceInventory, item, "equipClothing", {
         slot: destination.clothingSlot,
@@ -15565,6 +15749,14 @@
     inventoryState.settingsDraft.notificationPosition = position;
     publishChanges();
   }
+  function setSoundPreference(key, value) {
+    if (key === "soundMuted" && typeof value === "boolean") inventoryState.settingsDraft.soundMuted = value;
+    else if (key === "soundVolume" && Number.isFinite(value)) inventoryState.settingsDraft.soundVolume = Math.max(0, Math.min(1, value));
+    publishChanges();
+  }
+  function previewInventorySound() {
+    playInventorySound("move", inventoryState.settingsDraft);
+  }
   async function closeInventorySettings() {
     if (inventoryState.settingsSaving) return;
     inventoryState.settingsOpen = false;
@@ -15590,6 +15782,7 @@
       ...inventoryState.playerSettings,
       ...inventoryState.settingsDraft
     };
+    configureSounds(inventoryState.sounds, inventoryState.playerSettings);
     await closeInventorySettings();
   }
   async function resetInventoryLayout() {
@@ -15856,7 +16049,12 @@
   function handleServerMessage(messageEvent) {
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "clothing") {
+    if (message.sounds) inventoryState.sounds = message.sounds;
+    if (message.type === "nearbyPlayers") {
+      inventoryState.nearbyPlayers = inventoryState.drag && canGiveFromInventory(findInventory(inventoryState.drag.inventoryId)) ? message.players || [] : [];
+      if (inventoryState.drag) inventoryState.destination = calculateDestination();
+      publishChanges();
+    } else if (message.type === "clothing") {
       inventoryState.clothing = message.state || null;
       if (!message.state) inventoryState.clothingOpen = false;
       publishChanges();
@@ -15898,6 +16096,7 @@
         notificationPosition: "middle-right",
         ...message.settings
       };
+      configureSounds(inventoryState.sounds, inventoryState.playerSettings);
       inventoryState.settingsDraft = { ...inventoryState.playerSettings };
       inventoryState.settingsOpen = true;
       clearPopups();
@@ -15909,6 +16108,7 @@
         ...message.settings
       };
       publishChanges();
+      configureSounds(inventoryState.sounds, inventoryState.playerSettings);
     } else if (message.type === "resetLayouts") {
       applyWindowReset();
     } else if (message.type === "itemBox") {
@@ -15980,7 +16180,13 @@
         inventoryState.itemKeybinds = ownInventory.itemKeybinds;
       if (ownInventory?.playerSettings)
         inventoryState.playerSettings = { ...ownInventory.playerSettings };
+      configureSounds(inventoryState.sounds, inventoryState.playerSettings);
+      const newlyOpenedShop = (message.inventories || []).find((inventory) => inventory.type === "shop" && !inventoryState.inventories.some((previous) => previous.id === inventory.id));
+      if (newlyOpenedShop) inventoryState.activeShopId = newlyOpenedShop.id;
       inventoryState.inventories = message.inventories || [];
+      if (!inventoryState.inventories.some((inventory) => inventory.id === inventoryState.activeShopId && inventory.type === "shop")) {
+        inventoryState.activeShopId = inventoryState.inventories.find((inventory) => inventory.type === "shop")?.id || null;
+      }
       inventoryState.visibleMetadata = message.visibleMetadata || {};
       inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
       inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
@@ -16198,10 +16404,11 @@
     const activeDrag = inventoryState.drag;
     const isDragSource = activeDrag?.inventoryId === inventory.id && activeDrag.itemId === item.id;
     const isShop = inventory.type === "shop";
+    const sellOffer = !isShop && getSellOffer(inventory, item);
     const itemClasses = [
       "item",
       isDragSource && "drag-source",
-      isShop && item.stock === 0 && "sold-out"
+      isShop && item.canBuy !== false && item.stock === 0 && "sold-out"
     ].filter(Boolean).join(" ");
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
@@ -16230,9 +16437,17 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: isShop ? item.stock === false ? "\u221E" : item.stock : item.amount }),
-          isShop && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price", children: [
+          isShop && item.canBuy !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price", children: [
             "$",
-            item.price
+            item.buyPrice ?? item.price
+          ] }),
+          isShop && item.canBuy === false && item.canSell && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price shop-sell-price", children: [
+            "+$",
+            item.sellPrice
+          ] }),
+          sellOffer && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price sell-price", children: [
+            "+$",
+            sellOffer.product.sellPrice
           ] })
         ]
       }
@@ -16637,8 +16852,9 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: definition.label || item.name }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: definition.description || definition.category }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
+          item.canSell && item.sellPrice !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Sell price", value: `$${item.sellPrice} each` }),
           item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Price", value: `$${item.price} each` }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Buy price", value: `$${item.price} each` }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               DetailRow,
               {
@@ -16694,6 +16910,7 @@
     if (inventory.metadata?.clothingEquipment) {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => unequipClothing(item.definition.clothingSlot), children: "Unequip" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
       ] });
     }
@@ -16701,7 +16918,7 @@
     const isCapturing = inventoryState.keybindCapture?.inventoryId === inventory.id && inventoryState.keybindCapture?.itemId === item.id;
     const canDrop = inventory.type === "player" && inventory.isOwn !== false || inventory.isPlayerExtra === true;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
-      inventory.type === "shop" ? item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      inventory.type === "shop" ? item.canBuy !== false && item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
         inventoryState.weaponSystemEnabled && item.definition.weapon && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openWeaponAttachments(inventory, item), children: "Attachments" }),
         (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
@@ -16710,6 +16927,11 @@
           ")"
         ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => captureItemKey(inventory, item), children: isCapturing ? "Press a key\u2026" : "Keybind" })),
         item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item), children: "Split stack" }),
+        getSellOffer(inventory, item) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => sellItem(inventory, item), children: "Sell" }),
+          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openSaleDialog(inventory, item), children: "Sell amount\u2026" })
+        ] }),
+        canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
         canDrop && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
@@ -16747,10 +16969,12 @@
     );
     if (!item) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "dialog", hidden: true });
     const isPurchase = dialog.kind === "purchase";
+    const isSale = dialog.kind === "sale";
+    const saleOffer = isSale && getSellOffer(inventory, item, dialog.shopId);
     const isDrop = dialog.kind === "drop";
     const quantity = Number(dialog.quantity);
-    const maximum = isPurchase ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : item.amount;
-    const totalPrice = Number.isInteger(quantity) && quantity > 0 ? quantity * (item.price || 0) : 0;
+    const maximum = isPurchase ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : isSale ? Math.min(1e3, item.amount) : item.amount;
+    const totalPrice = Number.isInteger(quantity) && quantity > 0 ? quantity * (isSale ? saleOffer?.product.sellPrice || 0 : item.buyPrice ?? item.price ?? 0) : 0;
     const dialogStyle = dialog.position ? { left: dialog.position.x, top: dialog.position.y, transform: "none" } : void 0;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "modal-backdrop" }),
@@ -16764,15 +16988,15 @@
           style: dialogStyle,
           children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { id: "dialog-title", onPointerDown: startDialogDrag, children: [
-              isPurchase ? "Buy " : isDrop ? "Drop " : "",
+              isPurchase ? "Buy " : isSale ? "Sell " : isDrop ? "Drop " : "",
               item.definition.label
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "div",
               {
-                className: !isPurchase && !isDrop ? "quantity-entry split-quantity" : "quantity-entry",
+                className: !isPurchase && !isDrop && !isSale ? "quantity-entry split-quantity" : "quantity-entry",
                 children: [
-                  !isPurchase && !isDrop && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "split-presets", "aria-label": "Quick split", children: [25, 50, 75].map((percentage) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  !isPurchase && !isDrop && !isSale && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "split-presets", "aria-label": "Quick split", children: [25, 50, 75].map((percentage) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                     "button",
                     {
                       onClick: () => updateDialogQuantity(
@@ -16801,20 +17025,20 @@
                       min: 1,
                       max: maximum,
                       value: dialog.quantity,
-                      "aria-label": isPurchase ? "Buy quantity" : isDrop ? "Drop quantity" : "Quantity",
+                      "aria-label": isPurchase ? "Buy quantity" : isSale ? "Sell quantity" : isDrop ? "Drop quantity" : "Quantity",
                       onChange: (changeEvent) => updateDialogQuantity(changeEvent.target.value)
                     }
                   )
                 ]
               }
             ),
-            isPurchase && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "purchase-total", children: [
+            (isPurchase || isSale) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "purchase-total", children: [
               "Total: $",
               totalPrice
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "buttons", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: closeQuantityDialog, children: "Cancel" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "confirm", onClick: confirmQuantityDialog, children: isPurchase ? "Buy" : isDrop ? "Drop" : "Confirm" })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "confirm", onClick: confirmQuantityDialog, children: isPurchase ? "Buy" : isSale ? "Sell" : isDrop ? "Drop" : "Confirm" })
             ] })
           ]
         }
@@ -16845,6 +17069,20 @@
         ]
       }
     );
+  }
+  function NearbyPlayerTargets() {
+    const drag = inventoryState.drag;
+    const sourceInventory = drag && findInventory(drag.inventoryId);
+    if (!drag || !canGiveFromInventory(sourceInventory)) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "nearby-player-targets", "aria-hidden": "true", children: inventoryState.nearbyPlayers.map((player) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        "data-player-target": player.id,
+        className: `weapon-part-target nearby-player-target${inventoryState.destination?.giveTarget === player.id ? " placement-ready" : ""}`,
+        style: { left: `${player.x * 100}%`, top: `${player.y * 100}%` }
+      },
+      player.id
+    )) });
   }
   function WeaponAttachmentWindow() {
     const panel = inventoryState.attachmentPanel;
@@ -16955,6 +17193,48 @@
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "A preview appears at the selected position." }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-sounds", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "sound-mute", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: inventoryState.settingsDraft.soundMuted === true,
+                    disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled,
+                    onChange: (event) => setSoundPreference("soundMuted", event.target.checked)
+                  }
+                ),
+                "Mute UI sounds"
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "sound-volume", children: [
+                "Sound volume ",
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100),
+                  "%"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  id: "sound-volume",
+                  type: "range",
+                  min: "0",
+                  max: "100",
+                  step: "1",
+                  value: Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100),
+                  disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted,
+                  onChange: (event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted,
+                  onClick: previewInventorySound,
+                  children: "Test sound"
+                }
+              )
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-reset", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Restore default window positions." }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -17044,6 +17324,7 @@
           hidden: !inventoryState.isOpen,
           style: { "--cell": `${inventoryState.cellSize}px` },
           children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(NearbyPlayerTargets, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWorkspace, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClothingWindow, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WeaponAttachmentWindow, {}),
@@ -17063,8 +17344,7 @@
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DragGhost, {}),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventorySettings, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "toast", hidden: !inventoryState.notice, children: inventoryState.notice })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {})
         ] }),
         document.body
       )

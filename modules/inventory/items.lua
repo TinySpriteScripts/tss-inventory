@@ -49,3 +49,8 @@ function helpers.Item(item, definition)
     result.shouldClose = true
     return result
 end
+
+function helpers.IsLootContainerType(typeName)
+    local definition = TSSContainers and TSSContainers[typeName]
+    return definition ~= nil and definition.items ~= nil and not definition.coords
+end

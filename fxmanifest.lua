@@ -9,6 +9,7 @@ author 'TinySprite'
 shared_scripts {
     'config.lua',
     'modules/inventory/items.lua',
+    'modules/giving/shared.lua',
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
@@ -16,6 +17,7 @@ shared_scripts {
     'modules/clothing/definitions.lua',
     'modules/weapons/definitions.lua',
     'data/containers.lua',
+    'modules/stashes/shared.lua',
     'data/vehicles.lua',
     'data/vehicle_models.lua',
     'data/shops.lua',
@@ -38,6 +40,9 @@ server_scripts {
     'modules/storage/server.lua',
     'modules/extras/server.lua',
     'modules/clothing/server.lua',
+    'modules/giving/server.lua',
+    'modules/loot/server.lua',
+    'modules/stashes/server.lua',
     'modules/inventory/server.lua'
 }
 
@@ -49,7 +54,9 @@ client_scripts {
     'modules/weapons/client.lua',
     'modules/weapons/paint.lua',
     'modules/weapons/preview.lua',
-    'modules/clothing/client.lua'
+    'modules/clothing/client.lua',
+    'modules/giving/client.lua',
+    'modules/stashes/client.lua'
 }
 
 ui_page 'web/index.html'

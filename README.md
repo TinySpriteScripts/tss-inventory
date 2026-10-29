@@ -220,3 +220,25 @@ Available equipment slots: `top`, `undershirt`, `pants`, `shoes`, `mask`, `bag`,
 A top's optional `arms` and `undershirt` values help prevent clipping. A separately equipped undershirt takes priority. Unequipping restores the appearance from before the first clothing item was equipped. If there is no room to return replaced clothing, the change is refused.
 
 Do not have another appearance script continuously overwrite the same equipped components. Initial character appearance loading is supported; saving full outfits to other clothing resources is separate.
+
+## Giving items
+
+Right-click a carried item and choose **Give** to hand its whole stack to the closest player.
+
+You can also drag an item over open screen space. Nearby players have circular targets that follow their screen positions. Drop the stack onto a circle to give it to that player. Dropping elsewhere still creates a world drop.
+
+`Config.GiveDistance` sets the maximum distance in metres (default `3.0`). The server checks distance, routing bucket, ownership, inventory space and weight before transferring. Rejected transfers leave the items with the sender. Item metadata and linked container contents are preserved.
+
+## UI sounds
+
+`Config.Sounds` enables the subtle move, equip, purchase and rejection sounds. Set `enabled = false` to disable them globally, or disable individual entries in `actions`. `volume` is the default volume from `0.0` to `1.0`.
+
+Players can mute sounds, change volume and preview a sound in `/inventorysettings`. Preferences are saved per character. Sounds play after confirmed UI actions; rejected placements sound once on release. Hovering and opening menus stay silent. The sounds are generated locally in `web/src/sounds.js` and require no audio downloads.
+
+## Shop trading
+
+Shop locations and product prices are in `data/shops.lua`. Each shop has an automatically sized catalogue. `buyPrice` is what the player pays; `sellPrice` is what the player receives. Shop and product `buy` / `sell` flags control each direction.
+
+While a shop is open, eligible carried items show their sell price in green. Drag a stack into the shop to sell it, or use **Sell** / **Sell amount** in its context menu. Cash/Bank selects the account for both purchases and payouts. Selling consumes the sold instance without restocking it. Non-empty containers cannot be sold.
+
+See `exports.md` for the full definition format and server exports.

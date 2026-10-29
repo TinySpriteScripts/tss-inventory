@@ -40,7 +40,8 @@ local tableDefinitions = {
 }
 
 function database.IsPersistent(inventory)
-    return inventory.type ~= 'drop' and inventory.persistent ~= false
+    return inventory.type ~= 'drop' and inventory.type ~= 'loot' and not inventory.isLoot
+        and not (TSSItemExports and TSSItemExports.IsLootContainerType(inventory.type)) and inventory.persistent ~= false
         and inventory.id:sub(1, 5) ~= 'drop:'
 end
 

@@ -32,6 +32,7 @@ Most changes return `true` or `false, error`. Creation returns `true, inventory`
 | `CreateInventory(inventoryId, typeName, options?)` | Create an inventory from a type. |
 | `CreateInventory(inventoryId, data)` | Create a stash using `label`, `size` or `slots`, and `maxweight`. |
 | `CreateContainer(typeName, options?)` | Create a container. Set `options.inventoryId` to choose its ID. |
+| `OpenStash(playerSource, stashName)` | Open a fixed stash from `data/containers.lua`. Checks distance and character ownership. |
 | `OpenInventory(playerSource, inventoryId?, data?)` | Open the inventory alongside the player's inventory. Omit the ID to open their own. Supply data to create a missing stash. |
 | `CloseInventory(playerSource, inventoryId?)` | Close one window, or omit the ID to close everything. |
 | `DeleteContainer(inventoryId)` | Delete a container. Player inventories, shops, drops and extra slots are excluded. |
@@ -54,6 +55,122 @@ local created, container = inventory:CreateContainer('stash', {
 if created then
     inventory:OpenInventory(playerSource, container.id)
 end
+```
+
+## Fixed stashes
+
+Add an entry with `coords` to `TSSContainers` in `data/containers.lua`:
+
+```lua
+business_storage = {
+    label = 'Business Storage',
+    size = { x = 8, y = 6 },
+    coords = vector3(760.24, 1280.56, 360.3),
+    distance = 2.0,
+    shared = true,
+    target = true,
+    openWhenNearby = true,
+    metadata = {},
+},
+```
+
+- `shared = true`: everyone uses the same contents. `false`: separate contents for each character. Defaults to `true`.
+- `target = true`: add an interaction through the bridge. Set `false` to disable it.
+- `openWhenNearby = true`: include the stash when the player opens their inventory nearby with TAB. Set `false` for target/export-only access.
+- Distance-based stashes (`target = false`, `openWhenNearby = true`) can draw a marker using `Config.FixedStash`. Target stashes never draw a marker.
+- `distance`: maximum distance from the coordinates. Defaults to `2.0` metres. The server also removes access when the player moves away.
+- Optional `bucket` restricts access to one routing bucket. Omit it for access in any bucket.
+- `whitelist`, `blacklist` and `maxWeight` use the normal inventory rules.
+
+Marker configuration in `config.lua`:
+
+```lua
+Config.FixedStash = {
+    Marker = 2, -- nil disables markers
+    drawDistance = 5.0,
+}
+```
+
+`drawDistance` controls visibility only; each stash's `distance` controls access.
+
+Stashes are created on first use and saved to the database. Shared IDs are `stash_business_storage`; personal IDs are `stash_business_storage:<citizenId>`. Entries without `coords`, such as backpacks and wallets, remain carried container types.
+
+Configured labels, positions, sizes and rules apply when reopened. Size changes preserve items and fail if the contents cannot fit. Item metadata and saved window positions are retained.
+
+To open one from another server script while the player is nearby:
+
+```lua
+local opened, errorMessage = exports['tss-inventory']:OpenStash(playerSource, 'business_storage')
+```
+
+## Temporary loot containers (server)
+
+Use `CreateContainer('loot', options)` and open it with `OpenInventory`:
+
+```lua
+local inventory = exports['tss-inventory']
+
+local created, container = inventory:CreateContainer('loot', {
+    inventoryId = 'loot_container1',
+    label = 'Loot',
+    size = { x = 8 },
+    items = {
+        plastic = { amount = { min = 1, max = 5 }, chance = 100 },
+        bandage = { amount = 2, chance = 30 },
+        water_bottle = {
+            amount = 1,
+            chance = 20,
+            metadata = { label = 'Found Water' },
+        },
+    },
+    maxItems = { min = 1, max = 3 },
+    deleteOnEmpty = true,
+    playerSource = playerSource,
+})
+
+if created then
+    inventory:OpenInventory(playerSource, container.id)
+end
+```
+
+- `items` uses item definition names as keys. Each type is rolled once when created.
+- `amount` accepts a whole number or `{ min, max }`. Defaults to `1`.
+- `chance` is a percentage from `0` to `100`. Defaults to `100`.
+- `maxItems` caps distinct item types selected. Accepts a whole number or `{ min, max }`. Defaults to all supplied types. Quantities may split into multiple stacks.
+- Chances are independent; fewer types than the cap may be selected. An empty roll returns `false, 'Loot roll produced no items'` when `deleteOnEmpty` is enabled.
+- Omit `size.y` to calculate rows from the rolled items and their footprints. Supply it for a fixed height. Normal grid limits apply.
+- `deleteOnEmpty` defaults to `true`. The container disappears for all viewers after its final item is successfully removed. Set `false` to retain an empty container until explicitly deleted or the resource restarts.
+- All loot containers stay in server memory, including those with `deleteOnEmpty = false`. They never save to the database.
+- `playerSource` sets the owner using the bridge. It does not open the window automatically.
+- IDs must be unique. Creating an existing ID returns `false` and does not reroll it. Omit `inventoryId` to generate an ID.
+
+Use `GetContainer(containerId)` to read it and `DeleteContainer(containerId)` to remove it manually. Failed creation returns `false, errorMessage`.
+
+### Item-backed loot containers
+
+A container definition with an `items` table becomes temporary rolled loot. Link an item to it with `container = 'stolen_wallet'`, `stack = false`, `useable = true` and `shouldClose = false`. The `stolen_wallet` item is already defined with the wallet image.
+
+```lua
+stolen_wallet = {
+    label = 'Stolen Wallet',
+    size = { x = 5, y = 1 },
+    items = {
+        cash = { amount = { min = 1, max = 100 }, chance = 100 },
+        lockpick = { amount = { min = 1, max = 2 }, chance = 10 },
+    },
+    maxItems = { min = 1, max = 2 },
+    deleteOnEmpty = true,
+},
+```
+
+Use the item to open it. Each item instance rolls once; reopening keeps the same remaining contents. Other carried containers, extra slots and item-key bindings use the normal container access rules.
+
+With `deleteOnEmpty = true`, taking its last item deletes both the loot inventory and the linked item in the same transaction. Failed saves restore both. Empty rolls also consume the empty item. Set `false` to retain the empty item and its inventory.
+
+`metadata.containerId` and `metadata.lootOpened` are saved with the item. Loot contents remain in server memory only. After a resource restart, an already-opened wallet cannot reroll; using it removes the expired empty item when deletion is enabled. Cash in carried loot follows `Config.MoneyAsItem`, including automatic spending and synchronization.
+
+```text
+/giveitem 1 stolen_wallet 1
 ```
 
 ## Change inventories
@@ -187,7 +304,41 @@ Start the registering script after tss-inventory. Restart it after restarting th
 | `CreateShop(data)` | Register one shop from `{name,label,coords,items,size?,distance?,account?}`. |
 | `OpenShop(playerSource, shopId)` | Open the shop alongside the player's inventory. |
 
-CreateShop products accept `name`, `price`, `amount` or `count`, and `info` or `metadata`. Coordinates are required. Each product name must be unique. Use `size={x=8}`; height is calculated automatically with a minimum of two rows. Use false for unlimited stock.
+CreateShop products accept `name`, `buyPrice` (or legacy `price`), `sellPrice`, `buy`, `sell`, `amount` or `count`, and `info` or `metadata`. Shop-level `buy` and `sell` toggles are also supported. Coordinates are required. Each product name must be unique. Use `size={x=8}`; height is calculated automatically with a minimum of two rows. Use false for unlimited stock.
+
+### Buying and selling
+
+Directions are from the player's perspective: `buy` allows players to buy from the shop; `sell` allows players to sell to it.
+
+```lua
+example_shop = {
+    label = 'Trade Counter',
+    coords = vector4(24.47, -1346.62, 28.50, 266.0),
+    pedModel = 'ig_bankman',
+    distance = 3.0,
+    size = { x = 8 },
+    account = 'cash',
+    buy = true,
+    sell = true,
+    stock = {
+        plastic = { buyPrice = 5, sellPrice = 2, amount = 100 },
+        bandage = { buyPrice = 10, amount = false }, -- buy only
+        aluminum = { sellPrice = 3 }, -- sell only
+        radio = { buyPrice = 250, sellPrice = 100, sell = false },
+    },
+},
+```
+
+- Prices are per item. Legacy `price` still sets the buy price.
+- Omit `sellPrice` to prevent selling a product. Omit both `buyPrice` and `price` for a sell-only product.
+- Shop-level `buy = false` or `sell = false` disables that direction for every product. Product flags can further restrict a product. Both product flags set to `false` hide that product.
+- An open shop shows green sell prices on eligible carried items. With multiple shop windows, the last touched shop determines these prices.
+- Drag a carried stack into the shop to sell it, or right-click it for **Sell** / **Sell amount**. Cash/Bank buttons select the payment or payout account. Trades accept up to 1,000 items at once.
+- Selling removes the exact selected instance and does not replenish the catalogue. Empty containers can be sold; containers with contents must be emptied first.
+- Prices, quantities, ownership, distance and revisions are checked on the server. Failed payments or saves keep the items and reverse the payment.
+
+`data/shops.lua` contains the converted public shop locations and editable product groups. Buy prices are from the supplied list; sell prices start at half, rounded down. Casino chips exchange 1:1. Ped spawning, targets and map blips use the bridge. `blip = { sprite = 52, colour = 2 }` is optional.
+
 
 ## World drops
 

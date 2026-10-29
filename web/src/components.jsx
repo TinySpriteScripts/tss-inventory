@@ -37,6 +37,8 @@ import {
   repackInventory,
   NOTIFICATION_POSITIONS,
   setNotificationPosition,
+  setSoundPreference,
+  previewInventorySound,
   closeInventorySettings,
   saveInventorySettings,
   openWeaponAttachments,
@@ -46,6 +48,11 @@ import {
   openInstalledAttachmentMenu,
   toggleClothingPanel,
   unequipClothing,
+  canGiveFromInventory,
+  giveItemToClosest,
+  getSellOffer,
+  sellItem,
+  openSaleDialog,
 } from "./inventoryStore.js";
 
 function ItemImage({
@@ -122,10 +129,11 @@ function InventoryItem({ inventory, item }) {
   const isDragSource =
     activeDrag?.inventoryId === inventory.id && activeDrag.itemId === item.id;
   const isShop = inventory.type === "shop";
+  const sellOffer = !isShop && getSellOffer(inventory, item);
   const itemClasses = [
     "item",
     isDragSource && "drag-source",
-    isShop && item.stock === 0 && "sold-out",
+    isShop && item.canBuy !== false && item.stock === 0 && "sold-out",
   ]
     .filter(Boolean)
     .join(" ");
@@ -164,7 +172,9 @@ function InventoryItem({ inventory, item }) {
       <span className="amount">
         {isShop ? (item.stock === false ? "∞" : item.stock) : item.amount}
       </span>
-      {isShop && <span className="price">${item.price}</span>}
+      {isShop && item.canBuy !== false && <span className="price">${item.buyPrice ?? item.price}</span>}
+      {isShop && item.canBuy === false && item.canSell && <span className="price shop-sell-price">+${item.sellPrice}</span>}
+      {sellOffer && <span className="price sell-price">+${sellOffer.product.sellPrice}</span>}
     </div>
   );
 }
@@ -563,9 +573,10 @@ function ItemTooltip() {
       <h3>{definition.label || item.name}</h3>
       <p>{definition.description || definition.category}</p>
       <DetailRow label="Weight" value={`${definition.weight / 1000} kg each`} />
+      {item.canSell && item.sellPrice !== undefined && <DetailRow label="Sell price" value={`$${item.sellPrice} each`} />}
       {item.price !== undefined && (
         <>
-          <DetailRow label="Price" value={`$${item.price} each`} />
+          <DetailRow label="Buy price" value={`$${item.price} each`} />
           <DetailRow
             label="Stock"
             value={item.stock === false ? "Unlimited" : item.stock}
@@ -622,6 +633,7 @@ function ItemContextMenu() {
   if (inventory.metadata?.clothingEquipment) {
     return <ClampedPopup popupId="context" position={contextMenu}>
       <button onClick={() => unequipClothing(item.definition.clothingSlot)}>Unequip</button>
+      <button onClick={() => giveItemToClosest(inventory, item)}>Give</button>
       <button onClick={() => showItemDetails(item, contextMenu)}>Details</button>
     </ClampedPopup>;
   }
@@ -635,7 +647,7 @@ function ItemContextMenu() {
   return (
     <ClampedPopup popupId="context" position={contextMenu}>
       {inventory.type === "shop" ? (
-        item.stock !== 0 && (
+        item.canBuy !== false && item.stock !== 0 && (
           <button onClick={() => openQuantityDialog(inventory, item, true)}>
             Buy amount…
           </button>
@@ -665,6 +677,11 @@ function ItemContextMenu() {
               Split stack
             </button>
           )}
+          {getSellOffer(inventory, item) && <>
+            <button onClick={() => sellItem(inventory, item)}>Sell</button>
+            {item.amount > 1 && <button onClick={() => openSaleDialog(inventory, item)}>Sell amount…</button>}
+          </>}
+          {canGiveFromInventory(inventory) && <button onClick={() => giveItemToClosest(inventory, item)}>Give</button>}
           {canDrop && (
             <>
               <button
@@ -713,16 +730,18 @@ function QuantityDialog() {
   );
   if (!item) return <div id="dialog" hidden />;
   const isPurchase = dialog.kind === "purchase";
+  const isSale = dialog.kind === "sale";
+  const saleOffer = isSale && getSellOffer(inventory, item, dialog.shopId);
   const isDrop = dialog.kind === "drop";
   const quantity = Number(dialog.quantity);
   const maximum = isPurchase
     ? item.stock === false
       ? 1000
       : Math.min(1000, item.stock)
-    : item.amount;
+    : isSale ? Math.min(1000, item.amount) : item.amount;
   const totalPrice =
     Number.isInteger(quantity) && quantity > 0
-      ? quantity * (item.price || 0)
+      ? quantity * (isSale ? saleOffer?.product.sellPrice || 0 : item.buyPrice ?? item.price ?? 0)
       : 0;
   const dialogStyle = dialog.position
     ? { left: dialog.position.x, top: dialog.position.y, transform: "none" }
@@ -739,17 +758,17 @@ function QuantityDialog() {
         style={dialogStyle}
       >
         <h3 id="dialog-title" onPointerDown={startDialogDrag}>
-          {isPurchase ? "Buy " : isDrop ? "Drop " : ""}
+          {isPurchase ? "Buy " : isSale ? "Sell " : isDrop ? "Drop " : ""}
           {item.definition.label}
         </h3>
         <div
           className={
-            !isPurchase && !isDrop
+            !isPurchase && !isDrop && !isSale
               ? "quantity-entry split-quantity"
               : "quantity-entry"
           }
         >
-          {!isPurchase && !isDrop && (
+          {!isPurchase && !isDrop && !isSale && (
             <div className="split-presets" aria-label="Quick split">
               {[25, 50, 75].map((percentage) => (
                 <button
@@ -782,7 +801,7 @@ function QuantityDialog() {
             aria-label={
               isPurchase
                 ? "Buy quantity"
-                : isDrop
+                : isSale ? "Sell quantity" : isDrop
                   ? "Drop quantity"
                   : "Quantity"
             }
@@ -791,13 +810,13 @@ function QuantityDialog() {
             }
           />
         </div>
-        {isPurchase && (
+        {(isPurchase || isSale) && (
           <div className="purchase-total">Total: ${totalPrice}</div>
         )}
         <div className="buttons">
           <button onClick={closeQuantityDialog}>Cancel</button>
           <button className="confirm" onClick={confirmQuantityDialog}>
-            {isPurchase ? "Buy" : isDrop ? "Drop" : "Confirm"}
+            {isPurchase ? "Buy" : isSale ? "Sell" : isDrop ? "Drop" : "Confirm"}
           </button>
         </div>
       </div>
@@ -832,6 +851,18 @@ function DragGhost() {
       <span className="amount">{destination?.craft || destination?.attachmentSlot ? 1 : drag.quantity}</span>
     </div>
   );
+}
+
+function NearbyPlayerTargets() {
+  const drag = inventoryState.drag;
+  const sourceInventory = drag && findInventory(drag.inventoryId);
+  if (!drag || !canGiveFromInventory(sourceInventory)) return null;
+
+  return <div className="nearby-player-targets" aria-hidden="true">
+    {inventoryState.nearbyPlayers.map((player) => <div key={player.id} data-player-target={player.id}
+      className={`weapon-part-target nearby-player-target${inventoryState.destination?.giveTarget === player.id ? " placement-ready" : ""}`}
+      style={{ left: `${player.x * 100}%`, top: `${player.y * 100}%` }} />)}
+  </div>;
 }
 
 function WeaponAttachmentWindow() {
@@ -934,6 +965,21 @@ function InventorySettings() {
             ))}
           </select>
           <p>A preview appears at the selected position.</p>
+          <div className="settings-sounds">
+            <label className="sound-mute">
+              <input type="checkbox" checked={inventoryState.settingsDraft.soundMuted === true}
+                disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled}
+                onChange={(event) => setSoundPreference("soundMuted", event.target.checked)} />
+              Mute UI sounds
+            </label>
+            <label htmlFor="sound-volume">Sound volume <span>{Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100)}%</span></label>
+            <input id="sound-volume" type="range" min="0" max="100" step="1"
+              value={Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100)}
+              disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted}
+              onChange={(event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)} />
+            <button disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted}
+              onClick={previewInventorySound}>Test sound</button>
+          </div>
           <div className="settings-reset">
             <span>Restore default window positions.</span>
             <button
@@ -1026,6 +1072,7 @@ export function InventoryApp() {
         hidden={!inventoryState.isOpen}
         style={{ "--cell": `${inventoryState.cellSize}px` }}
       >
+        <NearbyPlayerTargets />
         <InventoryWorkspace />
         <ClothingWindow />
         <WeaponAttachmentWindow />
@@ -1046,9 +1093,6 @@ export function InventoryApp() {
           <DragGhost />
           <InventorySettings />
           <ItemBoxNotifications />
-          <div id="toast" hidden={!inventoryState.notice}>
-            {inventoryState.notice}
-          </div>
         </>,
         document.body,
       )}

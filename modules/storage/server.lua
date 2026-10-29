@@ -165,6 +165,10 @@ function TSSCreateStorageService(context)
     function storageService.CanAccess(playerSource, inventoryId)
         local inventory = context.load(inventoryId)
         if not inventory then return false end
+        if context.stashAccess then
+            local allowed = context.stashAccess(playerSource, inventory)
+            if allowed ~= nil then return allowed end
+        end
         if inventory.type == 'extra' then return context.extraAccess(playerSource, inventoryId) end
         if inventory.metadata.containerItem then return carriesContainer(playerSource, inventoryId) end
         local grant = vehicleGrants[playerSource] and vehicleGrants[playerSource][inventoryId]
@@ -190,10 +194,18 @@ function TSSCreateStorageService(context)
         local container = type(containerId) == 'string' and context.load(containerId)
         local missingLinkedContainer = type(containerId) == 'string'
             and containerId:sub(1, #definition.container + 1) == definition.container .. '_' and not container
+        if TSSItemExports.IsLootContainerType(definition.container) and (type(containerId) == 'string' or item.metadata.lootOpened == true) and not container then
+            if TSSContainers[definition.container].deleteOnEmpty ~= false then
+                inventoryCore.remove(sourceInventory, item.id, 1)
+                context.commit(sourceInventory)
+                return nil, nil, true
+            end
+            return false, 'This loot container is empty; it cannot be searched again'
+        end
         if containerId == nil or missingLinkedContainer then
             containerId = containerId or ('%s_%x%x'):format(definition.container, os.time(), math.random(1, 0x7fffffff))
-            local created, creationError = context.createLinked(playerSource, sourceInventory, item, definition.container, containerId)
-            if not created then return false, creationError end
+            local created, creationError, consumedEmpty = context.createLinked(playerSource, sourceInventory, item, definition.container, containerId)
+            if not created then return false, creationError, consumedEmpty end
             container = context.load(containerId)
         end
         if not container or container.type ~= definition.container or container.metadata.containerItem ~= item.name then return false, 'Container link is invalid' end
@@ -202,7 +214,8 @@ function TSSCreateStorageService(context)
     end
 
     function storageService.OpenItem(playerSource, sourceInventory, itemId)
-        local container, containerError = storageService.ResolveItem(playerSource, sourceInventory, itemId)
+        local container, containerError, consumedEmpty = storageService.ResolveItem(playerSource, sourceInventory, itemId)
+        if consumedEmpty then return true end
         if not container then return false, containerError end
         return context.open(playerSource, container.id)
     end

@@ -19,6 +19,7 @@ end
 local function closeInventory(shouldNotifyServer)
     if isCrafting and shouldNotifyServer ~= false then return false end
     isOpen = false
+    if TSSInventoryClient and TSSInventoryClient.Giving then TSSInventoryClient.Giving.Stop() end
     if TSSInventoryClient and TSSInventoryClient.WeaponPreview then TSSInventoryClient.WeaponPreview.Close() end
     SetNuiFocus(false, false)
     SendNUIMessage({ type = 'close' })
@@ -71,7 +72,7 @@ RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, ce
     isOpen = true
     SetNuiFocus(true, true)
     SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity,
-        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true })
+        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true, sounds = Config.Sounds })
 end)
 
 RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
@@ -98,10 +99,16 @@ exports('ItemBox', function(itemName, action, amount)
     return showItemBox(definition, action, amount)
 end)
 
-RegisterNetEvent('tss-inventory:notice', function(message, notificationOnly)
+RegisterNetEvent('tss-inventory:notice', function(message)
     if source ~= 65535 then return end
-    if notificationOnly ~= true then SendNUIMessage({ type = 'notice', message = tostring(message) }) end
     bridge.Notify.Send({ title = 'Inventory', description = tostring(message), type = 'inform' })
+end)
+
+RegisterNUICallback('notify', function(request, callback)
+    if type(request.message) == 'string' and #request.message > 0 and #request.message <= 1000 then
+        bridge.Notify.Send({ title = 'Inventory', description = request.message, type = 'inform' })
+    end
+    callback({ ok = true })
 end)
 
 RegisterNetEvent('tss-inventory:result', function(requestId, succeeded, message)
@@ -129,14 +136,14 @@ RegisterNetEvent('tss-inventory:ownSnapshot', function(inventory)
         readyInventoryId = inventory.id
         bridge.Notify.Send({ title = 'Inventory', description = 'Inventory ready', type = 'success' })
     end
-    SendNUIMessage({ type = 'preferences', settings = inventory and inventory.playerSettings or {} })
+    SendNUIMessage({ type = 'preferences', settings = inventory and inventory.playerSettings or {}, sounds = Config.Sounds })
 end)
 
 RegisterNetEvent('tss-inventory:settings', function(settings)
     if source ~= 65535 then return end
     isOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'openSettings', settings = settings })
+    SendNUIMessage({ type = 'openSettings', settings = settings, sounds = Config.Sounds })
 end)
 
 RegisterNetEvent('tss-inventory:resetLayouts', function()

@@ -22,8 +22,12 @@ local moneyService = nil
 local weaponService = nil
 local attachmentService = nil
 local clothingService = nil
+local givingService = nil
+local lootService = nil
+local stashService = nil
 
 local inventoryTypes = {
+    loot = { label = 'Loot', size = { x = 8, y = 1 } },
     extra = { label = 'Extra inventory', size = { x = 1, y = 1 } },
     player = inventoryCore.copy(Config.PlayerDefaults),
     stash = inventoryCore.copy(Config.DefaultStash),
@@ -31,7 +35,9 @@ local inventoryTypes = {
     glovebox = inventoryCore.copy(Config.VehicleDefaults.glovebox),
 }
 
-for typeName, definition in pairs(TSSContainers) do inventoryTypes[typeName] = inventoryCore.copy(definition) end
+for typeName, definition in pairs(TSSContainers) do
+    if not definition.coords then inventoryTypes[typeName] = inventoryCore.copy(definition) end
+end
 
 -- Database awaits yield. Serialize reads and writes so staged changes stay private.
 local function runOperation(callback, ...)
@@ -163,6 +169,9 @@ local function getPlayerPreferences(inventory)
     return {
         notificationPosition = notificationPositions[preferences.notificationPosition] and preferences.notificationPosition or 'middle-right',
         windowLayoutVersion = tonumber(preferences.windowLayoutVersion) or 0,
+        soundMuted = preferences.soundMuted == true,
+        soundVolume = type(preferences.soundVolume) == 'number' and preferences.soundVolume == preferences.soundVolume
+            and math.max(0.0, math.min(1.0, preferences.soundVolume)) or (Config.Sounds and Config.Sounds.volume or 0.2),
     }
 end
 
@@ -220,9 +229,17 @@ local function restoreInventory(inventoryId)
 end
 
 local function commit(...)
+    local requestedInventories = { ... }
+    if lootService then
+        local called, prepared, prepareError = pcall(lootService.Prepare, requestedInventories)
+        if not called or not prepared then
+            for _, inventory in ipairs(requestedInventories) do restoreInventory(inventory.id) end
+            error(prepareError or (not called and prepared) or 'Loot transaction failed')
+        end
+    end
     local changedInventories = {}
     local processedIds = {}
-    for _, inventory in ipairs({ ... }) do
+    for _, inventory in ipairs(requestedInventories) do
         if not processedIds[inventory.id] and not inventoryCore.equal(inventory, committedInventories[inventory.id]) then
             processedIds[inventory.id] = true
             inventory.revision = inventory.revision + 1
@@ -235,6 +252,21 @@ local function commit(...)
     if not cashReceipts then
         for _, inventory in ipairs(changedInventories) do restoreInventory(inventory.id) end
         error(cashError or 'Cash transaction failed')
+    end
+    -- Cash reconciliation can empty an item-backed loot container while paying.
+    if lootService then
+        local called, prepared, prepareError = pcall(lootService.Prepare, changedInventories)
+        if not called or not prepared then
+            for _, inventory in ipairs(changedInventories) do restoreInventory(inventory.id) end
+            if moneyService then moneyService.Rollback(cashReceipts) end
+            error(prepareError or (not called and prepared) or 'Loot transaction failed')
+        end
+        for _, inventory in ipairs(changedInventories) do
+            if not processedIds[inventory.id] then
+                processedIds[inventory.id] = true
+                inventory.revision = inventory.revision + 1
+            end
+        end
     end
     if weightService and Config.DynamicContainerWeight then
         local overrides = {}
@@ -253,6 +285,7 @@ local function commit(...)
         error(saveError or (not callSucceeded and saved) or 'Database transaction failed')
     end
     for _, inventory in ipairs(changedInventories) do committedInventories[inventory.id] = inventoryCore.copy(inventory) end
+    if lootService then lootService.AfterCommit(changedInventories) end
     if dropService then dropService.AfterCommit(changedInventories) end
     if storageService then storageService.RevokeInvalid() end
     if weaponService then weaponService.RevokeInvalid() end
@@ -274,9 +307,11 @@ local function commit(...)
     return true
 end
 
-local function createInventory(inventoryId, typeName, options, linkedInventory)
+local function createInventory(inventoryId, typeName, options, linkedInventory, lootItems, lootNextItemId)
     options = options or {}
     if not validInventoryId(inventoryId) or not inventoryTypes[typeName] then return false, 'Invalid inventory ID or type' end
+    local isLoot = typeName == 'loot' or TSSItemExports.IsLootContainerType(typeName)
+    if isLoot and not lootItems then return false, 'Use CreateContainer for loot inventories' end
     if inventoryId:sub(1, 5) == 'drop:' or typeName == 'drop' then return false, 'World drop IDs are reserved' end
     if typeName ~= 'player' and inventoryId:sub(1, 7) == 'player_' then return false, 'Player inventory IDs are reserved' end
     if loadInventory(inventoryId) then return false, 'Inventory already exists' end
@@ -298,10 +333,16 @@ local function createInventory(inventoryId, typeName, options, linkedInventory)
     if coordinateError then return false, coordinateError end
     local inventory = {
         id = inventoryId, type = typeName, owner = owner, label = definition.label or typeName,
-        size = definition.size, items = {}, metadata = metadata, settings = {}, coords = coordinates,
+        size = definition.size, items = lootItems or {}, metadata = metadata, settings = {}, coords = coordinates,
         whitelist = definition.whitelist or {}, blacklist = definition.blacklist or {},
-        maxWeight = definition.maxWeight, nextItemId = 1, revision = 0,
+        maxWeight = definition.maxWeight, nextItemId = lootNextItemId or 1, revision = 0,
     }
+    if isLoot then
+        inventory.isLoot = true
+        inventory.persistent = false
+        inventory.deleteOnEmpty = definition.deleteOnEmpty ~= false
+    end
+    if inventory.maxWeight and inventoryCore.weight(inventory) > inventory.maxWeight then return false, 'Weight limit exceeded' end
     if type(inventory.label) ~= 'string' or #inventory.label > 100 then return false, 'Invalid inventory label' end
     inventories[inventoryId] = inventory
     if linkedInventory then commit(inventory, linkedInventory) else commit(inventory) end
@@ -418,6 +459,12 @@ registerExport('CreateInventory', function(inventoryId, typeName, options)
 end)
 registerExport('CreateContainer', function(typeName, options)
     options = options or {}
+    if TSSItemExports.IsLootContainerType(typeName) then
+        local prepared = inventoryCore.copy(TSSContainers[typeName])
+        for key, value in pairs(options) do prepared[key] = inventoryCore.copy(value) end
+        return lootService.Create(prepared, { typeName = typeName })
+    end
+    if typeName == 'loot' then return lootService.Create(options) end
     if typeName == 'player' or typeName == 'drop' or typeName == 'shop' or typeName == 'extra' then return false, 'Use the dedicated creation API for this type' end
     local inventoryId = options.inventoryId or ('%s_%x%x'):format(typeName, os.time(), math.random(1, 0x7fffffff))
     return createInventory(inventoryId, typeName, options)
@@ -438,6 +485,7 @@ end)
 registerExport('DeleteContainer', function(inventoryId)
     local inventory = loadInventory(inventoryId)
     if not inventory or inventory.type == 'player' or inventory.type == 'drop' or inventory.type == 'shop' or inventory.type == 'extra' then return false, 'Invalid container; use RemoveExtraInventory for extra slots' end
+    if inventory.isLoot or inventory.type == 'loot' then return lootService.Delete(inventory) end
     if not database.Delete(inventory) then return false, 'Database deletion failed' end
     inventories[inventoryId] = nil
     committedInventories[inventoryId] = nil
@@ -778,10 +826,11 @@ registerExport('CreateShop', function(data)
     local stock = {}
     for _, item in ipairs(data.items) do
         if type(item.name) ~= 'string' or stock[item.name] then return false, 'Invalid or duplicate shop product' end
-        stock[item.name] = { price = item.price, amount = item.amount ~= nil and item.amount or item.count, metadata = item.info or item.metadata }
+        stock[item.name] = { price = item.price, buyPrice = item.buyPrice, sellPrice = item.sellPrice, buy = item.buy, sell = item.sell,
+            amount = item.amount ~= nil and item.amount or item.count, metadata = item.info or item.metadata }
     end
     return shopService.Register(data.name, { label = data.label, coords = data.coords, distance = data.distance,
-        account = data.account, groups = data.groups, size = data.size or { x = 8 }, stock = stock })
+        account = data.account, groups = data.groups, buy = data.buy, sell = data.sell, size = data.size or { x = 8 }, stock = stock })
 end)
 
 registerExport('OpenShop', function(playerSource, shopId) return shopService.Open(tonumber(playerSource), shopId) end)
@@ -943,6 +992,13 @@ local function handleAction(playerSource, request)
             if type(request.settings) ~= 'table' or not notificationPositions[request.settings.notificationPosition] then
                 return false, 'Invalid notification position'
             end
+            if request.settings.soundMuted ~= nil and type(request.settings.soundMuted) ~= 'boolean' then return false, 'Invalid sound mute setting' end
+            local soundVolume = request.settings.soundVolume
+            if soundVolume ~= nil and (type(soundVolume) ~= 'number' or soundVolume ~= soundVolume or soundVolume < 0 or soundVolume > 1) then
+                return false, 'Invalid sound volume'
+            end
+            if request.settings.soundMuted ~= nil then preferences.soundMuted = request.settings.soundMuted end
+            if soundVolume ~= nil then preferences.soundVolume = soundVolume end
             preferences.notificationPosition = request.settings.notificationPosition
         else
             preferences.windowLayoutVersion = preferences.windowLayoutVersion + 1
@@ -980,6 +1036,10 @@ local function handleAction(playerSource, request)
         if sourceInventory.type ~= 'shop' or not inventorySession[request.to] then return false, 'Shop access denied' end
         return shopService.Buy(playerSource, request)
     end
+    if request.kind == 'sell' then
+        if not inventorySession[request.to] then return false, 'Shop access denied' end
+        return shopService.Sell(playerSource, request)
+    end
     if sourceInventory.type == 'shop' then return false, 'Shop catalogue is read-only' end
     if request.kind == 'repack' then
         local repacked, repackError = inventoryCore.repack(sourceInventory)
@@ -1001,6 +1061,7 @@ local function handleAction(playerSource, request)
         if moved then commit(sourceInventory, container) end
         return moved, moveError
     end
+    if request.kind == 'give' then return givingService.Give(playerSource, sourceInventory, request) end
     if request.kind == 'drop' then return dropService.Drop(playerSource, sourceInventory, request.itemId, request.amount, request.rotated) end
     if request.kind == 'bindKey' or request.kind == 'unbindKey' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
@@ -1202,6 +1263,9 @@ registerPlayerEvent('tss-inventory:openSettings', function(playerSource)
     return true
 end)
 
+registerPlayerEvent('tss-inventory:openStash', function(playerSource, stashName) return stashService.Open(playerSource, stashName) end)
+registerExport('OpenStash', function(playerSource, stashName) return stashService.Open(tonumber(playerSource), stashName) end)
+
 registerPlayerEvent('tss-inventory:openVehicle', function(playerSource, networkId, compartment) return storageService.OpenVehicle(playerSource, networkId, compartment) end)
 
 registerPlayerEvent('tss-inventory:openSelf', function(playerSource, nearbyTrunkNetworkId)
@@ -1211,6 +1275,7 @@ registerPlayerEvent('tss-inventory:openSelf', function(playerSource, nearbyTrunk
         if not gloveboxOpened and nearbyTrunkNetworkId then
             storageService.OpenVehicle(playerSource, nearbyTrunkNetworkId, 'trunk')
         end
+        stashService.OpenNearby(playerSource)
     end
     return opened, openError
 end)
@@ -1390,6 +1455,7 @@ end)
 
 local inventoryContext = {
     load = loadInventory,
+    findCarried = findCarriedItem,
     player = ensurePlayerInventory,
     identity = database.PlayerInventoryId,
     open = openInventory,
@@ -1402,6 +1468,9 @@ local inventoryContext = {
     forget = function(inventoryId) inventories[inventoryId] = nil; committedInventories[inventoryId] = nil end,
 }
 
+inventoryContext.stashAccess = function(playerSource, inventory)
+    return stashService and stashService.CanAccess(playerSource, inventory)
+end
 inventoryContext.extraAccess = function(playerSource, inventoryId)
     return extraInventoryService and extraInventoryService.CanAccess(playerSource, inventoryId) or false
 end
@@ -1415,9 +1484,21 @@ inventoryContext.createLinked = function(playerSource, parentInventory, item, ty
     local containerMetadata = inventoryCore.copy(TSSContainers[typeName].metadata or {})
     containerMetadata.containerItem = item.name
     item.metadata.containerId = containerId
+    if TSSItemExports.IsLootContainerType(typeName) then
+        item.metadata.lootOpened = true
+        local options = inventoryCore.copy(TSSContainers[typeName])
+        options.inventoryId, options.playerSource, options.metadata = containerId, playerSource, containerMetadata
+        local created, creationError = lootService.Create(options, { typeName = typeName, parent = parentInventory })
+        if not created and creationError == 'Loot roll produced no items' then
+            inventoryCore.remove(parentInventory, item.id, 1)
+            commit(parentInventory)
+            return false, nil, true
+        end
+        if not created then item.metadata = previousMetadata end
+        return created, creationError
+    end
     local created, creationError = createInventory(containerId, typeName, {
-        playerSource = playerSource,
-        metadata = containerMetadata,
+        playerSource = playerSource, metadata = containerMetadata,
     }, parentInventory)
     if not created then item.metadata = previousMetadata end
     return created, creationError
@@ -1432,12 +1513,48 @@ craftingService = TSSCreateCraftingService({
     identity = database.PlayerInventoryId, load = loadInventory, locks = inventoryLocks,
     commit = commit, operation = runOperation, notify = notifyPlayer,
 })
+lootService = TSSCreateLootService({
+    load = loadInventory, metadata = cleanMetadata, locks = inventoryLocks, sessions = sessions, send = sendInventories,
+    create = function(options, items, nextItemId, link)
+        return createInventory(options.inventoryId, link and link.typeName or 'loot', options, link and link.parent, items, nextItemId)
+    end,
+    parents = function(containerId)
+        local matches = {}
+        local container = loadInventory(containerId)
+        local function search(inventory)
+            for _, item in ipairs(inventory.items) do
+                local definition = inventoryCore.definition(item.name)
+                if container and definition and definition.container == container.type
+                    and container.metadata.containerItem == item.name and item.metadata.containerId == containerId then
+                    matches[#matches + 1] = { inventory = inventory, itemId = item.id }
+                end
+            end
+        end
+        for _, inventory in pairs(inventories) do search(inventory) end
+        if #matches == 0 then
+            for _, inventoryId in ipairs(database.ParentInventoryIds(containerId)) do
+                local inventory = loadInventory(inventoryId)
+                if inventory then search(inventory) end
+            end
+        end
+        return matches
+    end,
+    forget = function(inventoryId)
+        inventories[inventoryId], committedInventories[inventoryId] = nil, nil
+        missingInventoryIds[inventoryId] = true
+    end,
+})
+
 extraInventoryService = TSSCreateExtraInventoryService(inventoryContext)
 weightService = TSSCreateWeightService({
     load = loadInventory,
     inventories = inventories,
     committed = committedInventories,
     extraRoots = extraInventoryService.RootsForInventory,
+})
+stashService = TSSCreateStashService({
+    player = ensurePlayerInventory, citizen = database.CitizenId, identity = database.PlayerInventoryId,
+    load = loadInventory, create = createInventory, commit = commit, open = openInventory, locks = inventoryLocks,
 })
 storageService = TSSCreateStorageService(inventoryContext)
 if Config.EnableClothingSystem and TSSCreateClothingService then
@@ -1447,6 +1564,14 @@ if Config.EnableClothingSystem and TSSCreateClothingService then
         canUse = storageService.CanUseFrom, busy = craftingService.Active,
     })
 end
+givingService = TSSCreateGivingService({
+    find = findCarriedItem, identity = database.PlayerInventoryId, player = ensurePlayerInventory,
+    locks = inventoryLocks, busy = craftingService.Active, commit = commit,
+    itemBox = function(playerSource, item, action, amount)
+        TriggerClientEvent('tss-inventory:itemBox', playerSource, inventoryCore.itemDefinition(item), action, amount)
+    end,
+})
+
 dropService = TSSCreateWorldDropService(inventoryContext)
 shopService = TSSCreateShopService(inventoryContext)
 

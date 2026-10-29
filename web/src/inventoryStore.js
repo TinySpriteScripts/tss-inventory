@@ -1,3 +1,4 @@
+import { configureSounds, playInventorySound } from "./sounds.js";
 import { planCraft } from "./crafting.js";
 // FiveM messages and pointer interactions live here; React owns all rendered UI.
 import {
@@ -14,7 +15,6 @@ const subscribers = new Set();
 
 let storeVersion = 0;
 let hoverTimeout = null;
-let noticeTimeout = null;
 let nextItemBoxId = 0;
 let dragAnimationFrame = null;
 let pressedItem = null;
@@ -34,6 +34,8 @@ const pendingLayoutIds = new Set();
 export const inventoryState = {
   isOpen: false,
   inventories: [],
+  nearbyPlayers: [],
+  sounds: { enabled: false, volume: 0.2, actions: {} },
   visibleMetadata: {},
   rarity: { enable: false, tiers: {} },
   weaponSystemEnabled: false,
@@ -46,6 +48,7 @@ export const inventoryState = {
   layouts: {},
   activeTabs: {},
   paymentMethods: {},
+  activeShopId: null,
   cellSize: 48,
   frontOrder: 10,
   isRequestPending: false,
@@ -61,7 +64,6 @@ export const inventoryState = {
   tooltip: null,
   contextMenu: null,
   dialog: null,
-  notice: null,
   itemBoxes: [],
   playerSettings: { notificationPosition: "middle-right" },
   settingsOpen: false,
@@ -258,13 +260,7 @@ function refreshDockingPreview() {
 }
 
 export function showNotice(message) {
-  inventoryState.notice = message;
-  clearTimeout(noticeTimeout);
-  noticeTimeout = setTimeout(() => {
-    inventoryState.notice = null;
-    publishChanges();
-  }, 3500);
-  publishChanges();
+  if (typeof message === "string" && message.length) void sendNuiRequest("notify", { message });
 }
 
 async function sendNuiRequest(route, payload = {}) {
@@ -316,14 +312,59 @@ export async function requestItemAction(
       itemId: item?.id,
       ...details,
     });
-    if (!response.ok) showNotice(response.message || "Action refused");
-    else if (actionKind === "buy" && response.message)
-      showNotice(response.message);
+    if (!response.ok) {
+      playInventorySound("reject");
+      showNotice(response.message || "Action refused");
+    } else {
+      if (["move", "quickMove", "storeInContainer", "repack"].includes(actionKind)) playInventorySound("move");
+      else if (actionKind === "buy" || actionKind === "sell") playInventorySound("purchase");
+      else if (["equipClothing", "unequipClothing", "installAttachment", "removeAttachment"].includes(actionKind)
+        || actionKind === "use" && (item?.definition.weapon || item?.definition.clothingSlot)) playInventorySound("equip");
+      if ((actionKind === "buy" || actionKind === "sell") && response.message) showNotice(response.message);
+    }
   } finally {
     inventoryState.isRequestPending = false;
     if (actionKind === "craft") inventoryState.craftingPending = false;
     publishChanges();
   }
+}
+
+let givingPreviewRequests = Promise.resolve();
+
+export function canGiveFromInventory(inventory) {
+  return Boolean(inventory && ((inventory.type === "player" && inventory.isOwn !== false)
+    || inventory.isPlayerExtra || inventory.metadata?.containerItem));
+}
+
+function setGivingPreview(active) {
+  if (!active) inventoryState.nearbyPlayers = [];
+  givingPreviewRequests = givingPreviewRequests.catch(() => {}).then(() => sendNuiRequest("givingPreview", { active }));
+}
+
+export function getSellOffer(inventory, item, shopId = inventoryState.activeShopId) {
+  if (!canGiveFromInventory(inventory) || !item) return null;
+  const shop = shopId ? findInventory(shopId) : inventoryState.inventories.find((candidate) => candidate.type === "shop");
+  const product = shop?.items.find((candidate) => candidate.name === item.name && candidate.canSell && Number.isFinite(candidate.sellPrice));
+  return product ? { shop, product } : null;
+}
+
+export function sellItem(inventory, item, amount = Math.min(item.amount, 1000), shopId) {
+  const offer = getSellOffer(inventory, item, shopId);
+  if (!offer) return showNotice("This shop does not buy that item");
+  return requestItemAction(inventory, item, "sell", { to: offer.shop.id, targetRevision: offer.shop.revision,
+    amount, account: getPaymentMethod(offer.shop) });
+}
+
+export function openSaleDialog(inventory, item) {
+  const offer = getSellOffer(inventory, item);
+  if (!offer) return;
+  openQuantityDialog(inventory, item, false, "sale");
+  inventoryState.dialog.shopId = offer.shop.id;
+  publishChanges();
+}
+
+export function giveItemToClosest(inventory, item) {
+  return requestItemAction(inventory, item, "give", { amount: item.amount });
 }
 
 export function repackInventory(inventory) {
@@ -480,6 +521,7 @@ export function openQuantityDialog(
   isPurchase = false,
   dialogKind = null,
 ) {
+  if (isPurchase && item.canBuy === false) return;
   if (isPurchase && item.stock === 0) return showNotice("Out of stock");
   clearPopups();
   inventoryState.dialog = {
@@ -531,11 +573,16 @@ export function confirmQuantityDialog() {
       ? item.stock === false
         ? 1000
         : Math.min(1000, item.stock)
-      : item.amount;
+      : dialog.kind === "sale" ? Math.min(1000, item.amount) : item.amount;
 
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > maximum)
     return showNotice("Enter a valid quantity");
   closeQuantityDialog();
+
+  if (dialog.kind === "sale") {
+    sellItem(inventory, item, quantity, dialog.shopId);
+    return;
+  }
 
   if (dialog.kind === "drop") {
     requestItemAction(inventory, item, "drop", { amount: quantity });
@@ -560,6 +607,7 @@ export function confirmQuantityDialog() {
 }
 
 export function touchInventory(inventory) {
+  if (inventory.type === "shop") { inventoryState.activeShopId = inventory.id; publishChanges(); }
   if (!(inventory.type === "player" && inventory.isOwn !== false))
     inventoryState.lastTouchedInventoryId = inventory.id;
 }
@@ -668,6 +716,20 @@ function calculateDestination() {
   const drag = inventoryState.drag;
   const pointer = inventoryState.pointer;
   const pointerElement = document.elementFromPoint(pointer.x, pointer.y);
+  const isOpenSpace = pointerElement?.closest("#inventory")
+    && !pointerElement.closest(".window, .weapon-inspection, #dialog, #context, footer");
+  if (drag && isOpenSpace && canGiveFromInventory(findInventory(drag.inventoryId))) {
+    let closestTarget = null;
+    let closestDistance = 32;
+    for (const target of inventoryState.nearbyPlayers) {
+      const distance = Math.hypot(pointer.x - target.x * innerWidth, pointer.y - target.y * innerHeight);
+      if (distance <= closestDistance) {
+        closestTarget = target;
+        closestDistance = distance;
+      }
+    }
+    if (closestTarget) return { giveTarget: closestTarget.id, isValid: true };
+  }
   const clothingElement = pointerElement?.closest("[data-clothing-slot]");
   if (clothingElement && inventoryState.clothingEnabled && inventoryState.clothing?.inventory) {
     const item = getDraggedItem();
@@ -695,6 +757,18 @@ function calculateDestination() {
   if (!drag || !inventory || !item) return null;
 
   const gridBounds = gridElement.getBoundingClientRect();
+  if (inventory.type === "shop") {
+    const offer = getSellOffer(findInventory(drag.inventoryId), item, inventory.id);
+    const product = offer?.product;
+    const footprint = product ? getItemFootprint(product) : { x: 1, y: 1 };
+    const column = product?.x || 1;
+    const row = product?.y || 1;
+    return { inventoryId: inventory.id, isSale: true, isValid: Boolean(offer && drag.quantity <= 1000),
+      reason: offer ? "Sell up to 1000 items at a time" : "This shop does not buy that item",
+      highlight: { x: column, y: row, width: footprint.x, height: footprint.y },
+      screenX: gridBounds.left + (column - 1) * inventoryState.cellSize,
+      screenY: gridBounds.top + (row - 1) * inventoryState.cellSize };
+  }
   const column =
     Math.floor((pointer.x - gridBounds.left) / inventoryState.cellSize) +
     1 -
@@ -857,6 +931,7 @@ function scrollDuringDrag() {
 
 function beginItemDrag(inventory, item, quantity, offsetX, offsetY) {
   pressedItem = null;
+  if (inventory.type === "shop" && item.canBuy === false) return showNotice("This shop only buys that item");
   if (inventory.type === "shop" && item.stock === 0)
     return showNotice("Out of stock");
   clearPopups();
@@ -868,11 +943,13 @@ function beginItemDrag(inventory, item, quantity, offsetX, offsetY) {
     offsetY,
     isRotated: item.rotated === true,
   };
+  setGivingPreview(canGiveFromInventory(inventory));
   refreshDragPreview();
   dragAnimationFrame = requestAnimationFrame(scrollDuringDrag);
 }
 
 export function cancelItemDrag(shouldPublish = true) {
+  if (inventoryState.drag) setGivingPreview(false);
   stopAttachmentDrag();
   pressedItem = null;
   inventoryState.drag = null;
@@ -909,8 +986,22 @@ function finishItemDrag() {
     }
     return;
   }
-  if (destination.isWeaponInspection && !destination.isValid) return;
-  if (!destination.isValid) return showNotice(destination.reason);
+  if (destination.isWeaponInspection && !destination.isValid) {
+    playInventorySound("reject");
+    return;
+  }
+  if (!destination.isValid) {
+    playInventorySound("reject");
+    return showNotice(destination.reason);
+  }
+  if (destination.isSale) {
+    void sellItem(sourceInventory, item, drag.quantity, destination.inventoryId);
+    return;
+  }
+  if (destination.giveTarget) {
+    void requestItemAction(sourceInventory, item, "give", { targetPlayer: destination.giveTarget, amount: drag.quantity });
+    return;
+  }
   if (destination.clothingSlot) {
     void requestItemAction(sourceInventory, item, "equipClothing", {
       slot: destination.clothingSlot, clothingRevision: inventoryState.clothing?.inventory?.revision,
@@ -1024,6 +1115,16 @@ export function setNotificationPosition(position) {
   publishChanges();
 }
 
+export function setSoundPreference(key, value) {
+  if (key === "soundMuted" && typeof value === "boolean") inventoryState.settingsDraft.soundMuted = value;
+  else if (key === "soundVolume" && Number.isFinite(value)) inventoryState.settingsDraft.soundVolume = Math.max(0, Math.min(1, value));
+  publishChanges();
+}
+
+export function previewInventorySound() {
+  playInventorySound("move", inventoryState.settingsDraft);
+}
+
 export async function closeInventorySettings() {
   if (inventoryState.settingsSaving) return;
   inventoryState.settingsOpen = false;
@@ -1050,6 +1151,7 @@ export async function saveInventorySettings() {
     ...inventoryState.playerSettings,
     ...inventoryState.settingsDraft,
   };
+  configureSounds(inventoryState.sounds, inventoryState.playerSettings);
   await closeInventorySettings();
 }
 
@@ -1362,7 +1464,13 @@ function handleKeyUp(keyboardEvent) {
 function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
-  if (message.type === "clothing") {
+  if (message.sounds) inventoryState.sounds = message.sounds;
+  if (message.type === "nearbyPlayers") {
+    inventoryState.nearbyPlayers = inventoryState.drag && canGiveFromInventory(findInventory(inventoryState.drag.inventoryId))
+      ? (message.players || []) : [];
+    if (inventoryState.drag) inventoryState.destination = calculateDestination();
+    publishChanges();
+  } else if (message.type === "clothing") {
     inventoryState.clothing = message.state || null;
     if (!message.state) inventoryState.clothingOpen = false;
     publishChanges();
@@ -1402,6 +1510,7 @@ function handleServerMessage(messageEvent) {
       notificationPosition: "middle-right",
       ...message.settings,
     };
+    configureSounds(inventoryState.sounds, inventoryState.playerSettings);
     inventoryState.settingsDraft = { ...inventoryState.playerSettings };
     inventoryState.settingsOpen = true;
     clearPopups();
@@ -1413,6 +1522,7 @@ function handleServerMessage(messageEvent) {
       ...message.settings,
     };
     publishChanges();
+    configureSounds(inventoryState.sounds, inventoryState.playerSettings);
   } else if (message.type === "resetLayouts") {
     applyWindowReset();
   } else if (message.type === "itemBox") {
@@ -1497,7 +1607,14 @@ function handleServerMessage(messageEvent) {
       inventoryState.itemKeybinds = ownInventory.itemKeybinds;
     if (ownInventory?.playerSettings)
       inventoryState.playerSettings = { ...ownInventory.playerSettings };
+    configureSounds(inventoryState.sounds, inventoryState.playerSettings);
+    const newlyOpenedShop = (message.inventories || []).find((inventory) => inventory.type === "shop"
+      && !inventoryState.inventories.some((previous) => previous.id === inventory.id));
+    if (newlyOpenedShop) inventoryState.activeShopId = newlyOpenedShop.id;
     inventoryState.inventories = message.inventories || [];
+    if (!inventoryState.inventories.some((inventory) => inventory.id === inventoryState.activeShopId && inventory.type === "shop")) {
+      inventoryState.activeShopId = inventoryState.inventories.find((inventory) => inventory.type === "shop")?.id || null;
+    }
     inventoryState.visibleMetadata = message.visibleMetadata || {};
     inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
     inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
