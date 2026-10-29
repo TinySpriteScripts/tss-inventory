@@ -1,9 +1,12 @@
 Config = Config or {}
 Config.TSS = {}
-Config.MoneyAsItem = true -- main player inventory cash mirrors the bridge cash account
+Config.EnableWeaponSystem = true -- false leaves equipping and ammo handling to other resources
+Config.WeaponReloadDuration = 1500 -- milliseconds
+Config.MoneyAsItem = true -- cash carried in player inventories, extra slots and their containers mirrors the bridge cash account
 Config.MaxDimension = 100
 Config.MaxCells = 10000
 Config.DynamicContainerWeight = true -- carried containers and equipped slots share the player weight
+Config.CleanUpEmptyInventories = true -- remove empty non-player database inventories once at startup (RECOMMENDED TRUE)
 Config.MaxTransferDistance = 3.0 -- reserved for future world interactions
 Config.CellSize = 48 -- identical for every inventory; overflow scrolls
 Config.OpenKey = 'TAB'
@@ -35,7 +38,7 @@ Config.ExtraInventories = {
 -- if not defined per item will use this
 Config.ItemDefaults = {
     size = {x=1,y=1},
-    category = 'misc', -- not sure what to do with categories so just data atm
+    category = 'misc', -- fallback category for items without one
     weight = 100, -- in grams
     stack = true,
     stackSize = 100,
@@ -67,9 +70,9 @@ Config.Rarity = {
 
 -- shows these metadata fields in the inventory when right click details
 Config.VisibleItemMetadata = {
-    usage = "Usage", -- metadata key and then the label thats shown in its place
-    durability = "Durability",
-    rarity = "Rarity",
+    usage = {label = "Usage"}, -- metadata key and then the label thats shown in its place
+    durability = {label = "Durability", progress = true}, -- progress bars use values from 0 to 100
+    rarity = {label = "Rarity"},
 }
 
 Config.VehicleStorage = {

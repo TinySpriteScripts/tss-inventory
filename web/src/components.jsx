@@ -34,10 +34,16 @@ import {
   toggleMinimised,
   closeInventoryWindow,
   resetInventoryLayout,
+  repackInventory,
   NOTIFICATION_POSITIONS,
   setNotificationPosition,
   closeInventorySettings,
   saveInventorySettings,
+  openWeaponAttachments,
+  closeWeaponAttachments,
+  removeWeaponAttachment,
+  startWeaponRotation,
+  openInstalledAttachmentMenu,
 } from "./inventoryStore.js";
 
 function ItemImage({
@@ -163,7 +169,7 @@ function InventoryItem({ inventory, item }) {
 
 function PlacementCells({ inventory }) {
   const destination = inventoryState.destination;
-  if (!destination || destination.inventoryId !== inventory.id) return null;
+  if (!destination || destination.attachmentSlot || destination.inventoryId !== inventory.id) return null;
   const highlight = destination.highlight;
   const cells = [];
 
@@ -314,6 +320,11 @@ function WindowButton({ children, label, onClick, className }) {
 function WindowControls({ inventory, isDocked }) {
   return (
     <div className="controls">
+      {inventory.type !== "shop" && <WindowButton label="Repack inventory" onClick={() => repackInventory(inventory)}>
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor">
+          <path d="M2 2h12" /><rect x="2" y="4" width="5" height="4" /><rect x="9" y="4" width="5" height="4" /><rect x="2" y="10" width="12" height="4" />
+        </svg>
+      </WindowButton>}
       <WindowButton
         label={isDocked ? "Undock active tab" : "Bring to front"}
         onClick={() =>
@@ -322,14 +333,12 @@ function WindowControls({ inventory, isDocked }) {
       >
         ▣
       </WindowButton>
-      {!isDocked && (
-        <WindowButton
-          label="Minimise"
-          onClick={() => toggleMinimised(inventory)}
-        >
-          −
-        </WindowButton>
-      )}
+      <WindowButton
+        label={getInventoryLayout(inventory).minimised ? "Restore" : "Minimise"}
+        onClick={() => toggleMinimised(inventory)}
+      >
+        {getInventoryLayout(inventory).minimised ? "+" : "−"}
+      </WindowButton>
       <WindowButton
         label="Close inventory"
         onClick={() => closeInventoryWindow(inventory)}
@@ -353,7 +362,7 @@ function InventoryWindow({
         left: dockBounds.x,
         top: dockBounds.y,
         width: dockBounds.width,
-        height: dockBounds.height,
+        height: layout.minimised ? undefined : dockBounds.height,
       }
     : {
         left: Math.max(0, Math.min(innerWidth - 180, layout.x)),
@@ -368,7 +377,7 @@ function InventoryWindow({
 
   return (
     <section
-      className={`window${isDocked ? " docked" : layout.minimised ? " minimised" : ""}`}
+      className={`window${isDocked ? " docked" : ""}${layout.minimised ? " minimised" : ""}`}
       onPointerDownCapture={() => touchInventory(inventory)}
       data-dock={dockSlotId || undefined}
       data-inventory={isDocked ? undefined : inventory.id}
@@ -501,8 +510,26 @@ function ItemTooltip() {
         </>
       )}
       {Object.entries(inventoryState.visibleMetadata).map(
-        ([metadataKey, metadataLabel]) => {
+        ([metadataKey, metadataSettings]) => {
           const metadataValue = item.metadata?.[metadataKey];
+          const metadataLabel = metadataSettings?.label ||
+            (typeof metadataSettings === "string" ? metadataSettings : metadataKey);
+          const progressValue = typeof metadataValue === "number" ||
+            (typeof metadataValue === "string" && metadataValue.trim() !== "")
+            ? Number(metadataValue) : NaN;
+          if (metadataSettings?.progress === true && Number.isFinite(progressValue)) {
+            const progressAmount = Math.min(100, Math.max(0, progressValue));
+            return (
+              <div className="detail metadata-progress-row" key={metadataKey}>
+                <span>{metadataLabel}</span>
+                <div className="metadata-progress" role="progressbar"
+                  aria-label={metadataLabel} aria-valuemin={0} aria-valuemax={100}
+                  aria-valuenow={progressAmount}>
+                  <div className="metadata-progress-fill" style={{ width: `${progressAmount}%` }} />
+                </div>
+              </div>
+            );
+          }
           return metadataValue === undefined ? null : (
             <DetailRow
               key={metadataKey}
@@ -524,6 +551,11 @@ function ItemContextMenu() {
   const contextMenu = inventoryState.contextMenu;
   if (!contextMenu) return <div id="context" hidden />;
   const { inventory, item } = contextMenu;
+  if (contextMenu.attachmentSlot) {
+    return <ClampedPopup popupId="context" position={contextMenu}>
+      <button onClick={() => removeWeaponAttachment(contextMenu.attachmentSlot)}>Disassemble</button>
+    </ClampedPopup>;
+  }
   const binding = getItemBinding(item.name);
   const isCapturing =
     inventoryState.keybindCapture?.inventoryId === inventory.id &&
@@ -545,6 +577,9 @@ function ItemContextMenu() {
             <button onClick={() => requestItemAction(inventory, item, "use")}>
               Use
             </button>
+          )}
+          {inventoryState.weaponSystemEnabled && item.definition.weapon && (
+            <button onClick={() => openWeaponAttachments(inventory, item)}>Attachments</button>
           )}
           {(binding || item.definition.useable !== false) &&
             (binding ? (
@@ -705,11 +740,11 @@ function DragGhost() {
   const drag = inventoryState.drag;
   const destination = inventoryState.destination;
   const item = destination?.craft?.item || getDraggedItem();
-  if (!drag || !item) return <div className="drag-ghost" hidden />;
+  if (!drag || !item || (destination?.isWeaponInspection && inventoryState.attachmentDrag?.ready)) return <div className="drag-ghost" hidden />;
   const size = getItemFootprint(item, destination?.craft ? false : drag.isRotated);
   const ghostStyle = {
-    width: size.x * inventoryState.cellSize,
-    height: size.y * inventoryState.cellSize,
+    width: destination?.ghostWidth || size.x * inventoryState.cellSize,
+    height: destination?.ghostHeight || size.y * inventoryState.cellSize,
     left:
       destination?.screenX ??
       inventoryState.pointer.x - drag.offsetX * inventoryState.cellSize,
@@ -725,8 +760,44 @@ function DragGhost() {
     >
       <ItemImage item={item} isRotated={destination?.craft ? false : drag.isRotated} isGhost />
       <RarityFrame item={item} />
-      <span className="amount">{destination?.craft ? 1 : drag.quantity}</span>
+      <span className="amount">{destination?.craft || destination?.attachmentSlot ? 1 : drag.quantity}</span>
     </div>
+  );
+}
+
+function WeaponAttachmentWindow() {
+  const panel = inventoryState.attachmentPanel;
+  if (!panel) return null;
+  const preview = inventoryState.attachmentPreview;
+  const destination = inventoryState.destination;
+  const draggedItem = getDraggedItem();
+  return (
+    <section className="weapon-inspection" aria-label="Weapon attachments">
+      <div className="weapon-rotation-surface" onPointerDown={startWeaponRotation}
+        aria-label="Drag to rotate weapon" />
+      <header className="header weapon-inspection-header">
+        <span className="title">{panel.weapon.definition.label}</span>
+        <div className="controls">
+          <WindowButton label="Close attachments" onClick={closeWeaponAttachments}>×</WindowButton>
+        </div>
+      </header>
+      {preview.status !== "ready" && <div className="weapon-preview-status" role="status">
+        {preview.status === "error" ? preview.message || "Weapon model unavailable" : "Loading weapon…"}
+      </div>}
+      {panel.slots.map((slot) => {
+        const anchor = preview.anchors[slot.id];
+        if (!anchor || preview.status !== "ready") return null;
+        const isCompatible = Boolean(draggedItem && slot.compatibleItems.includes(draggedItem.name));
+        const isHighlighted = isCompatible && destination?.isWeaponInspection;
+        return <button key={slot.id} type="button"
+          className={`weapon-part-target${isHighlighted ? " highlighted" : ""}${isHighlighted && destination.isValid ? " placement-ready" : ""}${slot.installed ? " installed" : ""}`}
+          style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%`,
+            pointerEvents: draggedItem ? isCompatible ? "auto" : "none" : slot.installed ? "auto" : "none" }}
+          data-attachment-slot={slot.id} aria-label={`${slot.label} attachment point`}
+          onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()}
+          onContextMenu={(pointerEvent) => openInstalledAttachmentMenu(slot, pointerEvent)} />;
+      })}
+    </section>
   );
 }
 
@@ -887,6 +958,7 @@ export function InventoryApp() {
         style={{ "--cell": `${inventoryState.cellSize}px` }}
       >
         <InventoryWorkspace />
+        <WeaponAttachmentWindow />
         <DockingSlots />
         <ItemTooltip />
         <ItemContextMenu />

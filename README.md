@@ -23,6 +23,8 @@ All SQL, table creation, database loading/saving and character lifecycle detecti
 
 Both store complete items (including item metadata), separate inventory metadata, viewer settings, size, rules, revision, next item ID and a millisecond `last_updated` timestamp. Settings are keyed by viewer CID so a shared inventory has independent docking and floating preferences for each character. The browser receives only the current viewer's settings.
 
+`Config.CleanUpEmptyInventories = true` removes empty rows from `tss_inventory_containers` once during startup, before inventories load. Player inventories and non-empty or malformed item data are preserved. Deleted rows lose their saved metadata, settings and custom rules too. Set it to `false` to keep empty inventories.
+
 Writes complete before success is acknowledged. Transfers save both participants together; a rejected write restores the cached state. Every accepted content/settings change updates last_updated. Each change saves immediately, so shutdown does not rely on a final flush.
 
 This is a fresh schema, without migrations or legacy import. If these table names already exist with an older development schema, stop the resource and drop those two development tables before starting it again. Startup creates missing tables and never drops existing data automatically.
@@ -58,9 +60,11 @@ Admin commands use FiveM ACE permissions through tss_bridge. An existing `comman
 - `setitemmetadata <inventory ID/self> <item ID> <JSON object>`
 - `inspectinventory [inventory ID/self]`
 
-For example `additem 1 radio 1`, then open with TAB. TAB opens your inventory plus the glovebox while seated, or a nearby unlocked trunk when standing at its rear. Vehicle targets remain available. First access creates persistent storage keyed by plate. Configure all 23 classes and model overrides in data/vehicles.lua; add custom model classes there or in data/vehicle_models.lua.
+For example `additem 1 radio 1`, then open with TAB. TAB opens your inventory plus the glovebox while seated, or a nearby unlocked trunk when standing at its rear. Trunk targets use the boot bone through tss_bridge. A successfully opened trunk inventory opens its boot door; it stays open until the last viewer closes or loses access. First access creates persistent storage keyed by plate. Configure all 23 classes and model overrides in data/vehicles.lua; add custom model classes there or in data/vehicle_models.lua.
 
 Give yourself `wallet` or `backpack` with additem, then double-click or right-click Use. Each gets a unique persistent container. Wallets accept cards/cash; backpacks accept wallets but exclude other backpacks by default.
+
+Drag an allowed item onto a carried container's icon to store it without opening its window. Item rules, capacity, weight and nesting are checked on the server. Use the repack button in an inventory title bar to compact its grid; it tries several layouts and keeps the best result without changing item IDs, amounts or metadata. Shop catalogues cannot be repacked by players.
 
 Shops use size={x=8}; height is calculated from footprints with a minimum of two rows. Legacy shop y values are ignored.
 
@@ -110,13 +114,13 @@ Release to craft. A green outline fills around the result while crafting. Items 
 
 ## Cash as an item
 
-Set `Config.MoneyAsItem = true` to link the main player inventory's `cash` items to the bridge cash account. It is enabled by default for testing. Set it to `false` and restart to use ordinary cash items without account syncing.
+Set `Config.MoneyAsItem = true` to link all carried `cash` items to the bridge cash account. It is enabled by default for testing. Set it to `false` and restart to use ordinary cash items without account syncing.
 
-The account balance sets the inventory cash amount when a character loads. Account changes made by other scripts sync within one second, and inventory access also checks the balance. Dropping cash or moving it into storage debits the account. Picking it up or moving it back credits the account. Cash in stashes, vehicles, wallets and backpacks is physical stored money and is not included in the spendable cash account.
+The account balance sets the inventory cash amount when a character loads. Account changes made by other scripts sync within one second, and inventory access also checks the balance. The total includes the main inventory, equipped extra inventory slots, and linked containers nested inside either. Moving cash between these carried inventories keeps the account balance unchanged. Dropping cash or a funded container, or moving it into a stash or vehicle, debits the account. Picking it back up credits it. Transferring a funded container to another player transfers its cash between accounts.
 
 Cash shop purchases charge once and update the cash item. Bank purchases only charge the bank account. Failed inventory saves reverse cash account changes; failed shop saves refund the original payment account. Offline cash item edits are refused while this toggle is enabled.
 
-Cash has zero weight and a large stack limit while syncing is enabled. If an external cash grant arrives while there is no cash stack and no free slot, the funds stay safely in the account. The cash item appears when a slot becomes available. Cash items represent whole currency units; fractional account amounts remain in the account. No extra SQL table is required.
+Cash has zero weight and a large stack limit while syncing is enabled. If an external cash grant arrives while there is no cash stack and no free slot, the funds stay safely in the account. Existing carried cash stacks are updated first. If there is no stack, syncing uses an allowed free slot in a carried inventory. The cash item appears when a slot becomes available. Cash items represent whole currency units; fractional account amounts remain in the account. No extra SQL table is required.
 
 ## Close inventory on item use
 
@@ -139,3 +143,43 @@ Give it a custom item label and additional metadata:
 ```
 
 Replace `1` with the player's server ID. Specify the amount before JSON metadata. `/additem` accepts the same arguments. Both names use the bridge command metadata and accept either the `command.giveitem` or `command.additem` ACE permission.
+
+## Built-in weapons
+
+`Config.EnableWeaponSystem = true` enables the standalone weapon module. Set it to `false` and restart to use an external weapon resource. The disabled module does not equip weapons, change ped weapon controls, handle reloads or intercept external usable-item callbacks.
+
+Define weapons in `data/weapons.lua`. Each definition has `weapon` (the GTA weapon name), `ammoItem` (the inventory ammunition item), and `clipSize`. Omit `ammoItem` for melee weapons. Weapons must be non-stacking usable items. The supplied list is registered as 106 native TSS weapon items. Addon-only weapons still need their streamed assets, and newer GTA weapons need a compatible server game build.
+
+Use a weapon item to equip it. Use the same instance again to holster it. R reloads while holding it and outside inventory menus. Each ammunition item represents one round; reloading takes only the rounds needed for the magazine, from main inventory, extra slots or linked carried containers. Loaded rounds are stored in the weapon instance's `metadata.ammo`. Native automatic reload is disabled while the module manages a weapon.
+
+```text
+/giveitem 1 weapon_pistol 1
+/giveitem 1 pistol_ammo 24
+```
+
+Use the pistol and press R. Use it again to unequip. The module also supports the existing item keybinds. Dropping, removing or moving the equipped weapon to another inventory holsters it. Character unload, death and resource stop remove the managed ped weapon. Only server-validated carried items can be equipped, and clients cannot increase saved ammo through ammo reports.
+
+Use one weapon controller at a time. Disable `qb-weapons` or another weapon controller while testing the built-in module, or set this resource's toggle to `false` to use that controller.
+
+## Weapon attachments
+
+Weapon definitions are in `data/weapons.lua`. Attachment items, slot types, tint indexes and per-weapon component names are in `data/attachments.lua`. These are native TSS data files; no QBCore dependency is required.
+
+Right-click a carried weapon and choose **Attachments**. Drag the weapon model to rotate it. Drag a compatible attachment into the inspection area, then release it over the green fitting highlight to install it. Physical attachments use their game models while being dragged; finishes, camo and tints use `prop_cs_spray_can`. Releasing away from the fitting point cancels placement. Installing a replacement returns the old part. Right-click an installed part at its fitting point and choose **Disassemble** to return it to your inventory. ESC closes the view and restores the camera.
+
+Fitting highlights follow the model's attachment bones. Weapons without those bones use model bounds as a fallback. For an addon model that needs different attachment points, add `attachmentAnchors = { scope = { x = 0.0, y = 0.0, z = 0.1 } }` to its weapon definition, using model-local coordinates.
+
+Applying a finish or tint plays a short red weapon-highlight effect after the server confirms installation. It uses `scr_sr_lg_weapon_highlight` from `scr_sr_adversary`, centred on the weapon and sized to its preview model. Closing the inspection view stops the effect. The spray can is only used as the dragged item model.
+
+```text
+/giveitem 1 weapon_pistol 1
+/giveitem 1 clip_attachment 1
+/giveitem 1 flashlight_attachment 1
+/giveitem 1 suppressor_attachment 1
+```
+
+Installed parts are stored as `metadata.attachments[slot] = { name = 'attachment_item', metadata = {} }`. Component hashes are resolved from trusted definitions when the weapon equips. Tints and finishes use their own slots. Part metadata is preserved on removal, and installed part weight contributes to weapon weight.
+
+Extended magazines change the configured capacity. Removing a magazine returns any excess loaded rounds as ammunition items. If returned parts or rounds will not fit, the change is refused. Inventory changes are saved together; failed saves keep the original weapon and parts. Editing is blocked during crafting and weapon reloads.
+
+Weapon `ammoMode` values are `firearm`, `melee`, `throwable`, `rechargeable`, `fuel` and `unarmed`. Throwable weapon items are consumed when their loaded unit is used. Stun/energy weapons use native recharge behaviour. Fuel tools start with `initialAmmo` and use fuel/refill units when reloaded. New launcher/refill ammunition definitions are registered alongside the weapons. Images for the newly imported entries are left for the next asset pass.

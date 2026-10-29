@@ -171,6 +171,21 @@ function database.Start(callbacks)
             return
         end
 
+        if Config.CleanUpEmptyInventories == true then
+            local cleaned, removedCount = pcall(function()
+                -- Guard JSON operations with CASE so malformed rows are preserved.
+                return MySQL.update.await([[DELETE FROM `tss_inventory_containers`
+                    WHERE `inventory_type` <> 'player'
+                    AND JSON_TYPE(CASE WHEN JSON_VALID(`items`) THEN `items` ELSE 'null' END) IN ('ARRAY', 'OBJECT')
+                    AND JSON_LENGTH(CASE WHEN JSON_VALID(`items`) THEN `items` ELSE 'null' END) = 0]])
+            end)
+            if cleaned then
+                print(('[tss-inventory] Removed %d empty container inventories.'):format(tonumber(removedCount) or 0))
+            else
+                print('[tss-inventory] Empty inventory cleanup failed: ' .. tostring(removedCount))
+            end
+        end
+
         database.ready = true
         callbacks.onReady()
 

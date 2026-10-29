@@ -61,6 +61,7 @@ end
 | Export | Action |
 | --- | --- |
 | `ResizeInventory(inventoryId, {x,y}, repack?)` | Resize the grid. Pass true to rearrange items to fit. Fails if items cannot fit. |
+| `RepackInventory(inventoryId)` | Compact an inventory, rotating items where useful. Keeps item IDs, amounts and metadata. Shop catalogues are read-only. |
 | `SetInventoryLabel(inventoryId, label)` | Save a title in metadata.label. Pass false to restore the stored default title. |
 | `SetInventoryOwner(inventoryId, citizenId?)` | Change or clear a container's owner. Player and extra-slot ownership cannot change. |
 | `SetInventoryCoords(inventoryId, coords)` | Set coordinates, or pass false to clear them. |
@@ -260,4 +261,24 @@ Use GetPlayerInventory instead of LoadInventory. TSS saves changes automatically
 
 ## Cash items
 
-When `Config.MoneyAsItem` is enabled, adding or removing `cash` in an online player's main inventory also changes their cash account. Moving cash into storage debits it; moving cash back credits it. Cash edits to offline player inventories are refused. Payment scripts should perform one cash operation; syncing handles the matching account or item change.
+When `Config.MoneyAsItem` is enabled, adding or removing `cash` anywhere in an online player's carried inventory tree also changes their cash account. This includes extra slots and linked nested containers. Moving cash within that tree leaves the balance unchanged. Moving cash or a funded container out of the tree debits it; moving it back credits it. Cash edits to offline player inventories are refused. Payment scripts should perform one cash operation; syncing handles the matching account or item change.
+
+## Equipped weapons
+
+These exports apply to the built-in weapon system when `Config.EnableWeaponSystem` is enabled.
+
+| Export | Action |
+| --- | --- |
+| `GetEquippedWeapon(playerSource)` | Returns the equipped inventory/item IDs, weapon name, loaded ammo and current equipment token, or nil. |
+| `UnequipWeapon(playerSource)` | Holsters the managed weapon. Returns false when the built-in system is disabled. |
+
+Use the existing `UseItem(playerSource, selector)` export to equip or toggle a carried weapon. Loaded rounds use `metadata.ammo`; client reports can only decrease that value.
+
+## Weapon attachment inspection
+
+| Export | Action |
+| --- | --- |
+| `OpenWeaponAttachments(playerSource, inventoryId, itemId)` | Opens the player's inventory and a rotatable 3D attachment view for a carried weapon instance. |
+| `GetWeaponAttachmentDefinitions()` | Returns the attachment item, slot, compatibility and tint definitions. |
+
+Installed parts are available through the normal item getters in `metadata.attachments`. Use `data/attachments.lua` to change compatible weapons and slot types. Attachment editing uses the built-in weapon system and requires `Config.EnableWeaponSystem = true`.

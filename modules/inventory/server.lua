@@ -18,6 +18,8 @@ local extraInventoryService = nil
 local weightService = nil
 local craftingService = nil
 local moneyService = nil
+local weaponService = nil
+local attachmentService = nil
 
 local inventoryTypes = {
     extra = { label = 'Extra inventory', size = { x = 1, y = 1 } },
@@ -238,6 +240,8 @@ local function commit(...)
     for _, inventory in ipairs(changedInventories) do committedInventories[inventory.id] = inventoryCore.copy(inventory) end
     if dropService then dropService.AfterCommit(changedInventories) end
     if storageService then storageService.RevokeInvalid() end
+    if weaponService then weaponService.RevokeInvalid() end
+    if attachmentService then attachmentService.RefreshViews() end
     for playerSource, inventoryId in pairs(playerInventoryIds) do
         if Config.DynamicContainerWeight and inventories[inventoryId] then
             TriggerClientEvent('tss-inventory:ownSnapshot', playerSource, snapshot(inventories[inventoryId], playerSource))
@@ -637,6 +641,12 @@ registerExport('MoveItem', function(sourceId, targetId, itemId, amount, column, 
 end)
 
 registerExport('ResizeInventory', function(inventoryId, size, shouldRepack) return mutateInventory(inventoryId, inventoryCore.resize, size, shouldRepack == true) end)
+registerExport('RepackInventory', function(inventoryId)
+    return mutateInventory(inventoryId, function(inventory)
+        if inventory.type == 'shop' then return false, 'Shop catalogue is read-only' end
+        return inventoryCore.repack(inventory)
+    end)
+end)
 
 local function updateInventoryDetails(inventoryId, callback)
     local inventory = loadInventory(inventoryId)
@@ -874,6 +884,7 @@ local function usableItemCallback(playerSource, inventoryId, itemSnapshot, defin
         -- Release inventory focus before the item's handler opens its own UI.
         if definition.shouldClose == true then
             sessions[playerSource] = nil
+            if attachmentService then attachmentService.Close(playerSource) end
             TriggerClientEvent('tss-inventory:close', playerSource, true)
         end
         return registration.handler(playerSource, itemSnapshot, inventoryId)
@@ -882,9 +893,11 @@ end
 
 local function handleAction(playerSource, request)
     if type(request) ~= 'table' then return false, 'Invalid request' end
+    if request.kind == 'closeAttachments' then return attachmentService.Close(playerSource) end
     if request.kind == 'cancelCraft' then return craftingService.Cancel(playerSource) end
     if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
     if playerInventoryIds[playerSource] ~= database.PlayerInventoryId(playerSource) then return false, 'Character session changed' end
+    if request.kind == 'removeAttachment' then return attachmentService.Remove(playerSource, request) end
     if request.kind == 'preferences' or request.kind == 'resetWindows' then
         local ownInventory, playerError = ensurePlayerInventory(playerSource)
         if not ownInventory then return false, playerError end
@@ -911,12 +924,34 @@ local function handleAction(playerSource, request)
     if sourceInventory.type == 'drop' and not dropService.IsNearby(playerSource, sourceInventory.id) then return false, 'Move closer to the drop' end
     if sourceInventory.revision ~= request.revision then sendInventories(playerSource); return false, 'Inventory changed; try again' end
     if inventoryLocks[sourceInventory.id] then return false, 'Inventory is busy' end
+    if request.kind == 'openAttachments' then return attachmentService.Open(playerSource, sourceInventory, request.itemId) end
+    if request.kind == 'installAttachment' then return attachmentService.Install(playerSource, sourceInventory, request) end
     if request.kind == 'craft' then return craftingService.Start(playerSource, sourceInventory, request) end
     if request.kind == 'buy' then
         if sourceInventory.type ~= 'shop' or not inventorySession[request.to] then return false, 'Shop access denied' end
         return shopService.Buy(playerSource, request)
     end
     if sourceInventory.type == 'shop' then return false, 'Shop catalogue is read-only' end
+    if request.kind == 'repack' then
+        local repacked, repackError = inventoryCore.repack(sourceInventory)
+        if repacked then commit(sourceInventory) end
+        return repacked, repackError
+    end
+    if request.kind == 'storeInContainer' then
+        local carrier = inventorySession[request.containerInventoryId] and loadInventory(request.containerInventoryId)
+        if not carrier or not storageService.CanAccess(playerSource, carrier.id) then return false, 'Container access denied' end
+        if carrier.revision ~= request.containerRevision then sendInventories(playerSource); return false, 'Inventory changed; try again' end
+        if inventoryLocks[carrier.id] then return false, 'Inventory is busy' end
+        if carrier.id == sourceInventory.id and request.containerItemId == request.itemId then return false, 'A container cannot be stored inside itself' end
+        local container, containerError = storageService.ResolveItem(playerSource, carrier, request.containerItemId)
+        if not container then return false, containerError end
+        if inventoryLocks[container.id] then return false, 'Inventory is busy' end
+        local item = inventoryCore.find(sourceInventory, request.itemId)
+        if not item or not storageService.CanMove(item, container.id) then return false, 'A container cannot be stored inside itself' end
+        local moved, moveError = inventoryCore.quickMove(sourceInventory, container, item.id, request.amount)
+        if moved then commit(sourceInventory, container) end
+        return moved, moveError
+    end
     if request.kind == 'drop' then return dropService.Drop(playerSource, sourceInventory, request.itemId, request.amount, request.rotated) end
     if request.kind == 'bindKey' or request.kind == 'unbindKey' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
@@ -939,10 +974,12 @@ local function handleAction(playerSource, request)
     if request.kind == 'use' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
         local definition = item and inventoryCore.definition(item.name)
+        if weaponService and weaponService.IsWeapon(item) then return weaponService.Use(playerSource, sourceInventory, item) end
         if definition and definition.container then
             local opened, openError = storageService.OpenItem(playerSource, sourceInventory, request.itemId)
             if opened and definition.shouldClose == true then
                 sessions[playerSource] = nil
+                if attachmentService then attachmentService.Close(playerSource) end
                 TriggerClientEvent('tss-inventory:close', playerSource, true)
             end
             return opened, openError
@@ -1045,6 +1082,7 @@ local function prepareCarriedUse(playerSource, selector)
     if not item then return false, playerError or 'Item is not carried' end
     local definition = inventoryCore.definition(item.name)
     if not definition or not definition.useable then return false, 'Item cannot be used' end
+    if weaponService and weaponService.IsWeapon(item) then return weaponService.Use(playerSource, sourceInventory, item) end
     if definition.container then
         local opened, openError = openInventory(playerSource, sourceInventory.id)
         if not opened then return false, openError end
@@ -1052,6 +1090,7 @@ local function prepareCarriedUse(playerSource, selector)
         local containerOpened, containerError = storageService.OpenItem(playerSource, sourceInventory, item.id)
         if containerOpened and definition.shouldClose == true then
             sessions[playerSource] = nil
+            if attachmentService then attachmentService.Close(playerSource) end
             TriggerClientEvent('tss-inventory:close', playerSource, true)
         end
         return containerOpened, containerError
@@ -1128,9 +1167,11 @@ registerPlayerEvent('tss-inventory:openShop', function(playerSource, shopId) ret
 registerPlayerEvent('tss-inventory:requestWorldDrops', function(playerSource) dropService.SyncPlayer(playerSource); return true end)
 registerPlayerEvent('tss-inventory:openWorldDrop', function(playerSource, inventoryId) return dropService.Open(playerSource, inventoryId) end)
 registerPlayerEvent('tss-inventory:closeSession', function(playerSource, inventoryId)
+    if not inventoryId and attachmentService then attachmentService.Close(playerSource) end
     if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
     if inventoryId and sessions[playerSource] then sessions[playerSource][inventoryId] = nil
     else sessions[playerSource] = nil end
+    storageService.RefreshTrunks()
     return true
 end)
 
@@ -1328,6 +1369,7 @@ end
 moneyService = TSSCreateMoneyService({
     players = playerInventoryIds, identity = database.PlayerInventoryId, load = loadInventory,
     locks = inventoryLocks, commit = commit,
+    extraRoots = function(inventory) return extraInventoryService and extraInventoryService.RootsForInventory(inventory) or {} end,
 })
 craftingService = TSSCreateCraftingService({
     identity = database.PlayerInventoryId, load = loadInventory, locks = inventoryLocks,
@@ -1344,8 +1386,71 @@ storageService = TSSCreateStorageService(inventoryContext)
 dropService = TSSCreateWorldDropService(inventoryContext)
 shopService = TSSCreateShopService(inventoryContext)
 
+weaponService = TSSCreateWeaponService({
+    find = findCarriedItem, load = loadInventory, locks = inventoryLocks, commit = commit,
+    busy = function(playerSource) return craftingService.Active(playerSource) end,
+    close = function(playerSource)
+        sessions[playerSource] = nil
+        if attachmentService then attachmentService.Close(playerSource) end
+        TriggerClientEvent('tss-inventory:close', playerSource, true)
+    end,
+    roots = function(playerSource)
+        local ownInventory = ensurePlayerInventory(playerSource)
+        local roots = ownInventory and { ownInventory } or {}
+        for _, inventory in ipairs(extraInventoryService.Roots(playerSource, false) or {}) do roots[#roots + 1] = inventory end
+        return roots
+    end,
+})
+
+attachmentService = TSSCreateAttachmentService({
+    find = findCarriedItem, load = loadInventory, player = ensurePlayerInventory,
+    locks = inventoryLocks, metadata = cleanMetadata, commit = commit,
+    busy = function(playerSource)
+        local equipped = weaponService.Get(playerSource)
+        return craftingService.Active(playerSource) or (equipped and equipped.reloadUntil > GetGameTimer())
+    end,
+    isOpen = function(playerSource) return sessions[playerSource] ~= nil end,
+    refreshEquipment = weaponService.Refresh,
+})
+
+registerExport('OpenWeaponAttachments', function(playerSource, inventoryId, itemId)
+    playerSource = tonumber(playerSource)
+    local opened, openError = openInventory(playerSource)
+    if not opened then return false, openError end
+    local inventory = loadInventory(inventoryId)
+    if not inventory then return false, 'Inventory not found' end
+    return attachmentService.Open(playerSource, inventory, itemId)
+end)
+registerExport('GetWeaponAttachmentDefinitions', function() return inventoryCore.copy(TSSAttachmentDefinitions) end)
+
+if Config.EnableWeaponSystem then
+    registerPlayerEvent('tss-inventory:weaponShot', weaponService.Shot)
+    RegisterNetEvent('tss-inventory:weaponAmmo', function(token, ammo)
+        local playerSource = source
+        if isRateLimited(playerSource) then return end
+        runOperation(weaponService.Report, playerSource, token, ammo)
+    end)
+    registerPlayerEvent('tss-inventory:weaponReload', weaponService.Reload)
+    registerPlayerEvent('tss-inventory:weaponInvalid', function(playerSource, token)
+        local state = weaponService.Get(playerSource)
+        if not state or state.token ~= token then return false end
+        weaponService.Unequip(playerSource)
+        return false, 'This weapon is unavailable in the current game build or needs its addon assets'
+    end)
+    RegisterNetEvent('tss-inventory:weaponHolster', function(token)
+        local playerSource = source
+        local state = weaponService.Get(playerSource)
+        if state and state.token == token then runOperation(weaponService.Unequip, playerSource) end
+    end)
+end
+
+registerExport('GetEquippedWeapon', function(playerSource) return weaponService.Get(tonumber(playerSource)) end)
+registerExport('UnequipWeapon', function(playerSource) return weaponService.Unequip(tonumber(playerSource)) end)
+
 local function unloadCharacter(playerSource)
     craftingService.Cancel(playerSource)
+    attachmentService.Close(playerSource)
+    if Config.EnableWeaponSystem then weaponService.Unequip(playerSource) end
     sessions[playerSource] = nil
     playerInventoryIds[playerSource] = nil
     requestLimits[playerSource] = nil
@@ -1385,6 +1490,6 @@ end)
 CreateThread(function()
     while true do
         Wait(1000)
-        if database.ready then runOperation(function() moneyService.Tick(); shopService.RevokeDistant(); dropService.Tick(); storageService.RevokeInvalid() end) end
+        if database.ready then runOperation(function() moneyService.Tick(); shopService.RevokeDistant(); dropService.Tick(); storageService.RevokeInvalid(); weaponService.RevokeInvalid() end) end
     end
 end)

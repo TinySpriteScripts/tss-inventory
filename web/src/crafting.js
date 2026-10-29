@@ -9,7 +9,7 @@ export function planCraft(inventory, sourceItem, targetItem) {
       amount: item.amount - (item.id === sourceItem.id ? recipe.input[sourceItem.name] :
         item.id === targetItem.id ? recipe.input[targetItem.name] : 0),
     })).filter((item) => item.amount > 0);
-    const output = { name: recipe.name, amount: 1, metadata: {}, definition: recipe.definition, rotated: false };
+    const output = { name: recipe.name, amount: recipe.output ?? 1, metadata: {}, definition: recipe.definition, rotated: false };
     const outputSize = recipe.definition.size;
     const fits = (column, row) => column > 0 && row > 0 && column + outputSize.x - 1 <= inventory.size.x &&
       row + outputSize.y - 1 <= inventory.size.y && remainingItems.every((obstacle) => {
@@ -29,7 +29,7 @@ export function planCraft(inventory, sourceItem, targetItem) {
     }
     if (!position) continue;
     const consumedWeight = recipe.input[sourceItem.name] * sourceItem.definition.weight + recipe.input[targetItem.name] * targetItem.definition.weight;
-    if (inventory.maxWeight != null && inventory.weight - consumedWeight + recipe.definition.weight > inventory.maxWeight) continue;
+    if (inventory.maxWeight != null && inventory.weight - consumedWeight + recipe.definition.weight * output.amount > inventory.maxWeight) continue;
     return { recipe: recipe.name, targetItemId: targetItem.id, item: { ...output, ...position }, duration: recipe.duration };
   }
   return null;

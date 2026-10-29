@@ -19,6 +19,11 @@ let nextItemBoxId = 0;
 let dragAnimationFrame = null;
 let pressedItem = null;
 let windowDrag = null;
+let weaponRotationDrag = null;
+let weaponRotationRequests = Promise.resolve();
+let attachmentDragFrame = null;
+let pendingAttachmentDrag = null;
+let lastAttachmentDragRequest = null;
 let dialogDrag = null;
 let lastDialogPosition = null;
 let layoutSavePromise = Promise.resolve();
@@ -31,6 +36,10 @@ export const inventoryState = {
   inventories: [],
   visibleMetadata: {},
   rarity: { enable: false, tiers: {} },
+  weaponSystemEnabled: false,
+  attachmentPanel: null,
+  attachmentPreview: { status: "loading", anchors: {} },
+  attachmentDrag: null,
   layouts: {},
   activeTabs: {},
   paymentMethods: {},
@@ -286,7 +295,7 @@ export async function requestItemAction(
       kind: actionKind,
       from: inventory.id,
       revision: inventory.revision,
-      itemId: item.id,
+      itemId: item?.id,
       ...details,
     });
     if (!response.ok) showNotice(response.message || "Action refused");
@@ -297,6 +306,113 @@ export async function requestItemAction(
     if (actionKind === "craft") inventoryState.craftingPending = false;
     publishChanges();
   }
+}
+
+export function repackInventory(inventory) {
+  return requestItemAction(inventory, null, "repack");
+}
+
+export function openWeaponAttachments(inventory, item) {
+  return requestItemAction(inventory, item, "openAttachments");
+}
+
+export function closeWeaponAttachments() {
+  stopAttachmentDrag();
+  inventoryState.attachmentPanel = null;
+  inventoryState.attachmentPreview = { status: "loading", anchors: {} };
+  stopWeaponRotation();
+  void sendNuiRequest("closeWeaponPreview");
+  publishChanges();
+  void sendNuiRequest("action", { kind: "closeAttachments" });
+}
+
+export function removeWeaponAttachment(slot) {
+  const panel = inventoryState.attachmentPanel;
+  if (!panel) return;
+  const inventory = findInventory(panel.inventoryId) || { id: panel.inventoryId, revision: panel.revision };
+  return requestItemAction(inventory, panel.weapon, "removeAttachment", {
+    weaponInventoryId: panel.inventoryId, weaponItemId: panel.itemId,
+    weaponRevision: panel.revision, slot,
+  });
+}
+
+export function openInstalledAttachmentMenu(slot, pointerEvent) {
+  pointerEvent.preventDefault();
+  pointerEvent.stopPropagation();
+  const panel = inventoryState.attachmentPanel;
+  if (!panel || !slot.installed || inventoryState.drag) return;
+  clearPopups();
+  inventoryState.contextMenu = {
+    x: pointerEvent.clientX, y: pointerEvent.clientY,
+    inventory: findInventory(panel.inventoryId) || { id: panel.inventoryId },
+    item: slot.installed, attachmentSlot: slot.id,
+  };
+  publishChanges();
+}
+
+function stopAttachmentDrag() {
+  if (attachmentDragFrame !== null) cancelAnimationFrame(attachmentDragFrame);
+  attachmentDragFrame = null;
+  pendingAttachmentDrag = null;
+  lastAttachmentDragRequest = null;
+  if (inventoryState.attachmentDrag) void sendNuiRequest("weaponPreviewDrag", { active: false });
+  inventoryState.attachmentDrag = null;
+}
+
+function updateAttachmentDrag() {
+  const panel = inventoryState.attachmentPanel;
+  const destination = inventoryState.destination;
+  const item = getDraggedItem();
+  if (!panel || !item || !destination?.isWeaponInspection || !destination.attachmentSlot) {
+    stopAttachmentDrag();
+    return;
+  }
+  const previous = inventoryState.attachmentDrag;
+  inventoryState.attachmentDrag = { name: item.name, ready: previous?.name === item.name && previous.ready };
+  const request = {
+    active: true, inventoryId: panel.inventoryId, itemId: panel.itemId, attachmentName: item.name,
+    pointerX: inventoryState.pointer.x / innerWidth, pointerY: inventoryState.pointer.y / innerHeight,
+  };
+  const previousRequest = pendingAttachmentDrag || lastAttachmentDragRequest;
+  if (previousRequest && Object.keys(request).every((key) => request[key] === previousRequest[key])) return;
+  pendingAttachmentDrag = request;
+  if (attachmentDragFrame !== null) return;
+  attachmentDragFrame = requestAnimationFrame(() => {
+    attachmentDragFrame = null;
+    const pending = pendingAttachmentDrag;
+    pendingAttachmentDrag = null;
+    if (!pending || !inventoryState.attachmentDrag) return;
+    lastAttachmentDragRequest = pending;
+    void sendNuiRequest("weaponPreviewDrag", pending);
+  });
+}
+
+function requestWeaponRotation(request) {
+  weaponRotationRequests = weaponRotationRequests.catch(() => {}).then(() => sendNuiRequest("rotateWeaponPreview", request));
+}
+
+export function startWeaponRotation(pointerEvent) {
+  const panel = inventoryState.attachmentPanel;
+  if (pointerEvent.button !== 0 || inventoryState.drag || !panel) return;
+  pointerEvent.preventDefault();
+  hideItemTooltip();
+  weaponRotationDrag = { inventoryId: panel.inventoryId, itemId: panel.itemId,
+    x: pointerEvent.clientX, y: pointerEvent.clientY };
+  requestWeaponRotation({
+    active: true, inventoryId: panel.inventoryId, itemId: panel.itemId,
+    pointerX: pointerEvent.clientX, pointerY: pointerEvent.clientY,
+    viewportWidth: innerWidth, viewportHeight: innerHeight,
+  });
+}
+
+function stopWeaponRotation(pointerEvent) {
+  const rotation = weaponRotationDrag;
+  weaponRotationDrag = null;
+  if (!rotation) return;
+  requestWeaponRotation({
+    active: false, inventoryId: rotation.inventoryId, itemId: rotation.itemId,
+    pointerX: pointerEvent?.clientX ?? rotation.x, pointerY: pointerEvent?.clientY ?? rotation.y,
+  });
 }
 
 export function scheduleItemTooltip(item, pointerEvent) {
@@ -532,6 +648,16 @@ export function getDraggedItem() {
 function calculateDestination() {
   const drag = inventoryState.drag;
   const pointer = inventoryState.pointer;
+  const pointerElement = document.elementFromPoint(pointer.x, pointer.y);
+  if (pointerElement?.closest(".weapon-inspection") && inventoryState.attachmentPanel) {
+    const panel = inventoryState.attachmentPanel;
+    const draggedItem = getDraggedItem();
+    const slot = panel.slots.find((candidate) => candidate.compatibleItems.includes(draggedItem?.name));
+    const anchor = slot && inventoryState.attachmentPreview.anchors[slot.id];
+    const distance = anchor ? Math.hypot(pointer.x - anchor.x * innerWidth, pointer.y - anchor.y * innerHeight) : Infinity;
+    return { inventoryId: "weapon-attachments", isWeaponInspection: true, panel,
+      attachmentSlot: slot?.id, isValid: distance <= 38 && inventoryState.attachmentPreview.status === "ready" };
+  }
   const gridElement = document
     .elementFromPoint(pointer.x, pointer.y)
     ?.closest(".grid");
@@ -552,9 +678,22 @@ function calculateDestination() {
   const hoveredRow = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1;
   const hoveredItem = inventory.items.find((candidate) => {
     const footprint = getItemFootprint(candidate);
-    return candidate.id !== item.id && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x &&
+    return (inventory.id !== drag.inventoryId || candidate.id !== item.id) && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x &&
       hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
   });
+  if (hoveredItem?.definition.container && inventory.type !== "shop" && findInventory(drag.inventoryId)?.type !== "shop") {
+    const rules = hoveredItem.definition.containerRules || {};
+    const canCarry = inventory.isOwn || inventory.isPlayerExtra || Boolean(inventory.metadata?.containerItem);
+    const isAllowed = (!rules.whitelist?.length || rules.whitelist.includes(item.name)) && !rules.blacklist?.includes(item.name);
+    const targetSize = getItemFootprint(hoveredItem);
+    return { inventoryId: inventory.id, containerItemId: hoveredItem.id,
+      isValid: Boolean(canCarry && isAllowed && hoveredItem.metadata?.containerId !== drag.inventoryId),
+      reason: "Item cannot be stored in this container",
+      highlight: { x: hoveredItem.x, y: hoveredItem.y, width: targetSize.x, height: targetSize.y },
+      screenX: gridBounds.left + (hoveredItem.x - 1) * inventoryState.cellSize,
+      screenY: gridBounds.top + (hoveredItem.y - 1) * inventoryState.cellSize,
+      ghostWidth: targetSize.x * inventoryState.cellSize, ghostHeight: targetSize.y * inventoryState.cellSize };
+  }
   const craft = inventory.id === drag.inventoryId && hoveredItem && planCraft(inventory, item, hoveredItem);
   if (craft) return {
     inventoryId: inventory.id, column: craft.item.x, row: craft.item.y, isValid: true, craft,
@@ -658,6 +797,7 @@ function calculateDestination() {
 function refreshDragPreview() {
   if (!inventoryState.drag) return;
   inventoryState.destination = calculateDestination();
+  updateAttachmentDrag();
   publishChanges();
 }
 
@@ -704,6 +844,7 @@ function beginItemDrag(inventory, item, quantity, offsetX, offsetY) {
 }
 
 export function cancelItemDrag(shouldPublish = true) {
+  stopAttachmentDrag();
   pressedItem = null;
   inventoryState.drag = null;
   inventoryState.destination = null;
@@ -726,7 +867,7 @@ function finishItemDrag() {
     );
     const isWorldBackground =
       pointerElement?.closest("#inventory") &&
-      !pointerElement.closest(".window, #dialog, #context, footer");
+      !pointerElement.closest(".window, .weapon-inspection, #dialog, #context, footer");
     if (
       isWorldBackground &&
       ((sourceInventory.type === "player" && sourceInventory.isOwn !== false) ||
@@ -739,7 +880,24 @@ function finishItemDrag() {
     }
     return;
   }
+  if (destination.isWeaponInspection && !destination.isValid) return;
   if (!destination.isValid) return showNotice(destination.reason);
+  if (destination.attachmentSlot) {
+    const panel = destination.panel;
+    void requestItemAction(sourceInventory, item, "installAttachment", {
+      weaponInventoryId: panel.inventoryId, weaponItemId: panel.itemId,
+      weaponRevision: panel.revision, slot: destination.attachmentSlot,
+    });
+    return;
+  }
+  if (destination.containerItemId) {
+    const carrier = findInventory(destination.inventoryId);
+    if (carrier) void requestItemAction(sourceInventory, item, "storeInContainer", {
+      amount: drag.quantity, containerInventoryId: carrier.id, containerRevision: carrier.revision,
+      containerItemId: destination.containerItemId,
+    });
+    return;
+  }
   const targetInventory = findInventory(destination.inventoryId);
   if (destination.craft) {
     void requestItemAction(sourceInventory, item, "craft", {
@@ -793,7 +951,6 @@ export function undockInventory(inventory) {
     dock: null,
     x: 100,
     y: 100,
-    minimised: false,
   });
   saveLayout();
   publishChanges();
@@ -870,6 +1027,8 @@ export async function resetInventoryLayout() {
 }
 
 function applyWindowReset() {
+  stopWeaponRotation();
+
   inventoryState.layouts = {};
   inventoryState.activeTabs = {};
   pendingLayoutIds.clear();
@@ -902,6 +1061,8 @@ export async function closeInventoryUi() {
   if (inventoryState.crafting || inventoryState.craftingPending) return;
   await layoutSavePromise;
   inventoryState.isOpen = false;
+  inventoryState.attachmentPanel = null;
+  stopWeaponRotation();
   inventoryState.dialog = null;
   clearPopups();
   cancelItemDrag(false);
@@ -915,6 +1076,11 @@ export async function closeInventoryUi() {
 }
 
 function handlePointerMove(pointerEvent) {
+  if (weaponRotationDrag) {
+    weaponRotationDrag.x = pointerEvent.clientX;
+    weaponRotationDrag.y = pointerEvent.clientY;
+    return;
+  }
   inventoryState.pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
 
   if (dialogDrag) {
@@ -1000,6 +1166,7 @@ function handlePointerMove(pointerEvent) {
 }
 
 function handlePointerUp(pointerEvent) {
+  if (weaponRotationDrag && pointerEvent.button === 0) { stopWeaponRotation(pointerEvent); return; }
   if (pointerEvent.button !== 0) return;
   pressedItem = null;
   dialogDrag = null;
@@ -1015,7 +1182,6 @@ function handlePointerUp(pointerEvent) {
         )
       : null;
     inventoryState.layouts[windowDrag.inventoryId].dock = dockSlotId;
-    inventoryState.layouts[windowDrag.inventoryId].minimised = false;
     if (dockSlotId)
       inventoryState.activeTabs[dockSlotId] = windowDrag.inventoryId;
     saveLayout();
@@ -1115,6 +1281,11 @@ function handleKeyDown(keyboardEvent) {
     dialogControls[nextControlIndex]?.focus();
     return;
   }
+  if (keyboardEvent.key === "Escape" && inventoryState.attachmentPanel && !inventoryState.drag && !inventoryState.dialog) {
+    keyboardEvent.preventDefault();
+    closeWeaponAttachments();
+    return;
+  }
   const drag = inventoryState.drag;
   if (drag && keyboardEvent.code === "KeyR" && !keyboardEvent.repeat) {
     keyboardEvent.preventDefault();
@@ -1156,7 +1327,29 @@ function handleKeyUp(keyboardEvent) {
 function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
-  if (message.type === "crafting") {
+  if (message.type === "attachments") {
+    const previousPanel = inventoryState.attachmentPanel;
+    inventoryState.attachmentPanel = message.panel || null;
+    if (!message.panel || previousPanel?.inventoryId !== message.panel.inventoryId || previousPanel?.itemId !== message.panel.itemId) {
+      inventoryState.attachmentPreview = { status: "loading", anchors: {} };
+      stopWeaponRotation();
+    }
+    publishChanges();
+  } else if (message.type === "weaponDragModel") {
+    const panel = inventoryState.attachmentPanel;
+    const drag = inventoryState.attachmentDrag;
+    if (!panel || panel.inventoryId !== message.inventoryId || panel.itemId !== message.itemId ||
+        !drag || drag.name !== message.attachmentName) return;
+    inventoryState.attachmentDrag = { ...drag, ready: message.ready === true };
+    publishChanges();
+  } else if (message.type === "weaponPreview") {
+    const panel = inventoryState.attachmentPanel;
+    if (!panel || panel.inventoryId !== message.inventoryId || panel.itemId !== message.itemId) return;
+    inventoryState.attachmentPreview = { ...inventoryState.attachmentPreview,
+      status: message.status, message: message.message,
+      anchors: message.anchors || inventoryState.attachmentPreview.anchors };
+    publishChanges();
+  } else if (message.type === "crafting") {
     inventoryState.crafting = message.craft || null;
     inventoryState.craftingPending = false;
     clearPopups();
@@ -1268,6 +1461,7 @@ function handleServerMessage(messageEvent) {
     inventoryState.inventories = message.inventories || [];
     inventoryState.visibleMetadata = message.visibleMetadata || {};
     inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
+    inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
     inventoryState.cellSize = message.cellSize || 48;
     inventoryState.isOpen = true;
     inventoryState.inventories.forEach(getInventoryLayout);
@@ -1292,6 +1486,8 @@ function handleServerMessage(messageEvent) {
   } else if (message.type === "close") {
     inventoryState.isOpen = false;
     inventoryState.settingsOpen = false;
+    inventoryState.attachmentPanel = null;
+    stopWeaponRotation();
     inventoryState.dialog = null;
     windowDrag = null;
     inventoryState.isDockKeyHeld = false;
@@ -1307,6 +1503,7 @@ export function initialiseInventoryUi() {
   document.addEventListener("pointerup", handlePointerUp);
   document.addEventListener("pointercancel", () => {
     dialogDrag = null;
+    stopWeaponRotation();
     windowDrag = null;
     inventoryState.isDockKeyHeld = false;
     refreshDockingPreview();
@@ -1335,6 +1532,7 @@ export function initialiseInventoryUi() {
   });
   window.addEventListener("message", handleServerMessage);
   window.addEventListener("blur", () => {
+    stopWeaponRotation();
     dialogDrag = null;
     windowDrag = null;
     inventoryState.isDockKeyHeld = false;
@@ -1343,6 +1541,8 @@ export function initialiseInventoryUi() {
   });
   window.addEventListener("resize", () => {
     inventoryState.viewport = { width: innerWidth, height: innerHeight };
+    const panel = inventoryState.attachmentPanel;
+    if (panel) void sendNuiRequest("weaponPreviewViewport", { inventoryId: panel.inventoryId, itemId: panel.itemId });
     refreshDockingPreview();
     if (inventoryState.dialog?.position) {
       const dialogBounds = document

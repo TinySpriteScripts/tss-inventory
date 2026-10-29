@@ -286,6 +286,23 @@ button:hover {
   max-width: 150px;
 }
 
+.metadata-progress-row {
+  align-items: center;
+}
+
+.metadata-progress {
+  width: 110px;
+  height: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #ffffff20;
+}
+
+.metadata-progress-fill {
+  height: 100%;
+  background: var(--red);
+}
+
 #context {
   width: 180px;
   padding: 4px;
@@ -698,3 +715,51 @@ input[type="number"]::-webkit-outer-spin-button {
 .item .amount, .item .price, .drag-ghost .amount {
   z-index: 2;
 }
+
+
+.weapon-inspection {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(90deg, #0c0e1080, transparent 44%, transparent 86%, #0c0e1040);
+}
+
+.weapon-rotation-surface {
+  position: absolute;
+  left: 34%;
+  right: 2%;
+  top: 14%;
+  bottom: 13%;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.weapon-rotation-surface:active { cursor: grabbing; }
+.weapon-inspection-header {
+  position: absolute;
+  left: 36%;
+  right: 3%;
+  top: 6%;
+  height: 34px;
+  padding: 0;
+  background: rgba(18, 20, 22, 0.88);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.weapon-preview-status { position: absolute; left: 65%; top: 50%; transform: translate(-50%, -50%); color: #bbb; font-size: 12px; }
+.weapon-part-target {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  transform: translate(-50%, -50%);
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+}
+.weapon-part-target.installed:hover { border-color: #ffffff50; background: #ffffff12; }
+.weapon-part-target.highlighted { border-color: #53bb76; background: #53bb7630; box-shadow: 0 0 18px #53bb7630; }
+.weapon-part-target.placement-ready { background: #53bb7655; box-shadow: 0 0 22px #53bb7650; }

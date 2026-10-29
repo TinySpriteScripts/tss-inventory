@@ -14670,7 +14670,7 @@
         ...item,
         amount: item.amount - (item.id === sourceItem.id ? recipe.input[sourceItem.name] : item.id === targetItem.id ? recipe.input[targetItem.name] : 0)
       })).filter((item) => item.amount > 0);
-      const output = { name: recipe.name, amount: 1, metadata: {}, definition: recipe.definition, rotated: false };
+      const output = { name: recipe.name, amount: recipe.output ?? 1, metadata: {}, definition: recipe.definition, rotated: false };
       const outputSize = recipe.definition.size;
       const fits = (column, row) => column > 0 && row > 0 && column + outputSize.x - 1 <= inventory.size.x && row + outputSize.y - 1 <= inventory.size.y && remainingItems.every((obstacle) => {
         const obstacleSize = obstacle.rotated ? { x: obstacle.definition.size.y, y: obstacle.definition.size.x } : obstacle.definition.size;
@@ -14687,7 +14687,7 @@
       }
       if (!position) continue;
       const consumedWeight = recipe.input[sourceItem.name] * sourceItem.definition.weight + recipe.input[targetItem.name] * targetItem.definition.weight;
-      if (inventory.maxWeight != null && inventory.weight - consumedWeight + recipe.definition.weight > inventory.maxWeight) continue;
+      if (inventory.maxWeight != null && inventory.weight - consumedWeight + recipe.definition.weight * output.amount > inventory.maxWeight) continue;
       return { recipe: recipe.name, targetItemId: targetItem.id, item: { ...output, ...position }, duration: recipe.duration };
     }
     return null;
@@ -14704,6 +14704,11 @@
   var dragAnimationFrame = null;
   var pressedItem = null;
   var windowDrag = null;
+  var weaponRotationDrag = null;
+  var weaponRotationRequests = Promise.resolve();
+  var attachmentDragFrame = null;
+  var pendingAttachmentDrag = null;
+  var lastAttachmentDragRequest = null;
   var dialogDrag = null;
   var lastDialogPosition = null;
   var layoutSavePromise = Promise.resolve();
@@ -14715,6 +14720,10 @@
     inventories: [],
     visibleMetadata: {},
     rarity: { enable: false, tiers: {} },
+    weaponSystemEnabled: false,
+    attachmentPanel: null,
+    attachmentPreview: { status: "loading", anchors: {} },
+    attachmentDrag: null,
     layouts: {},
     activeTabs: {},
     paymentMethods: {},
@@ -14928,7 +14937,7 @@
         kind: actionKind,
         from: inventory.id,
         revision: inventory.revision,
-        itemId: item.id,
+        itemId: item?.id,
         ...details
       });
       if (!response.ok) showNotice(response.message || "Action refused");
@@ -14939,6 +14948,123 @@
       if (actionKind === "craft") inventoryState.craftingPending = false;
       publishChanges();
     }
+  }
+  function repackInventory(inventory) {
+    return requestItemAction(inventory, null, "repack");
+  }
+  function openWeaponAttachments(inventory, item) {
+    return requestItemAction(inventory, item, "openAttachments");
+  }
+  function closeWeaponAttachments() {
+    stopAttachmentDrag();
+    inventoryState.attachmentPanel = null;
+    inventoryState.attachmentPreview = { status: "loading", anchors: {} };
+    stopWeaponRotation();
+    void sendNuiRequest("closeWeaponPreview");
+    publishChanges();
+    void sendNuiRequest("action", { kind: "closeAttachments" });
+  }
+  function removeWeaponAttachment(slot) {
+    const panel = inventoryState.attachmentPanel;
+    if (!panel) return;
+    const inventory = findInventory(panel.inventoryId) || { id: panel.inventoryId, revision: panel.revision };
+    return requestItemAction(inventory, panel.weapon, "removeAttachment", {
+      weaponInventoryId: panel.inventoryId,
+      weaponItemId: panel.itemId,
+      weaponRevision: panel.revision,
+      slot
+    });
+  }
+  function openInstalledAttachmentMenu(slot, pointerEvent) {
+    pointerEvent.preventDefault();
+    pointerEvent.stopPropagation();
+    const panel = inventoryState.attachmentPanel;
+    if (!panel || !slot.installed || inventoryState.drag) return;
+    clearPopups();
+    inventoryState.contextMenu = {
+      x: pointerEvent.clientX,
+      y: pointerEvent.clientY,
+      inventory: findInventory(panel.inventoryId) || { id: panel.inventoryId },
+      item: slot.installed,
+      attachmentSlot: slot.id
+    };
+    publishChanges();
+  }
+  function stopAttachmentDrag() {
+    if (attachmentDragFrame !== null) cancelAnimationFrame(attachmentDragFrame);
+    attachmentDragFrame = null;
+    pendingAttachmentDrag = null;
+    lastAttachmentDragRequest = null;
+    if (inventoryState.attachmentDrag) void sendNuiRequest("weaponPreviewDrag", { active: false });
+    inventoryState.attachmentDrag = null;
+  }
+  function updateAttachmentDrag() {
+    const panel = inventoryState.attachmentPanel;
+    const destination = inventoryState.destination;
+    const item = getDraggedItem();
+    if (!panel || !item || !destination?.isWeaponInspection || !destination.attachmentSlot) {
+      stopAttachmentDrag();
+      return;
+    }
+    const previous = inventoryState.attachmentDrag;
+    inventoryState.attachmentDrag = { name: item.name, ready: previous?.name === item.name && previous.ready };
+    const request = {
+      active: true,
+      inventoryId: panel.inventoryId,
+      itemId: panel.itemId,
+      attachmentName: item.name,
+      pointerX: inventoryState.pointer.x / innerWidth,
+      pointerY: inventoryState.pointer.y / innerHeight
+    };
+    const previousRequest = pendingAttachmentDrag || lastAttachmentDragRequest;
+    if (previousRequest && Object.keys(request).every((key) => request[key] === previousRequest[key])) return;
+    pendingAttachmentDrag = request;
+    if (attachmentDragFrame !== null) return;
+    attachmentDragFrame = requestAnimationFrame(() => {
+      attachmentDragFrame = null;
+      const pending = pendingAttachmentDrag;
+      pendingAttachmentDrag = null;
+      if (!pending || !inventoryState.attachmentDrag) return;
+      lastAttachmentDragRequest = pending;
+      void sendNuiRequest("weaponPreviewDrag", pending);
+    });
+  }
+  function requestWeaponRotation(request) {
+    weaponRotationRequests = weaponRotationRequests.catch(() => {
+    }).then(() => sendNuiRequest("rotateWeaponPreview", request));
+  }
+  function startWeaponRotation(pointerEvent) {
+    const panel = inventoryState.attachmentPanel;
+    if (pointerEvent.button !== 0 || inventoryState.drag || !panel) return;
+    pointerEvent.preventDefault();
+    hideItemTooltip();
+    weaponRotationDrag = {
+      inventoryId: panel.inventoryId,
+      itemId: panel.itemId,
+      x: pointerEvent.clientX,
+      y: pointerEvent.clientY
+    };
+    requestWeaponRotation({
+      active: true,
+      inventoryId: panel.inventoryId,
+      itemId: panel.itemId,
+      pointerX: pointerEvent.clientX,
+      pointerY: pointerEvent.clientY,
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight
+    });
+  }
+  function stopWeaponRotation(pointerEvent) {
+    const rotation = weaponRotationDrag;
+    weaponRotationDrag = null;
+    if (!rotation) return;
+    requestWeaponRotation({
+      active: false,
+      inventoryId: rotation.inventoryId,
+      itemId: rotation.itemId,
+      pointerX: pointerEvent?.clientX ?? rotation.x,
+      pointerY: pointerEvent?.clientY ?? rotation.y
+    });
   }
   function scheduleItemTooltip(item, pointerEvent) {
     if (inventoryState.drag) return;
@@ -15123,6 +15249,21 @@
   function calculateDestination() {
     const drag = inventoryState.drag;
     const pointer = inventoryState.pointer;
+    const pointerElement = document.elementFromPoint(pointer.x, pointer.y);
+    if (pointerElement?.closest(".weapon-inspection") && inventoryState.attachmentPanel) {
+      const panel = inventoryState.attachmentPanel;
+      const draggedItem = getDraggedItem();
+      const slot = panel.slots.find((candidate) => candidate.compatibleItems.includes(draggedItem?.name));
+      const anchor = slot && inventoryState.attachmentPreview.anchors[slot.id];
+      const distance = anchor ? Math.hypot(pointer.x - anchor.x * innerWidth, pointer.y - anchor.y * innerHeight) : Infinity;
+      return {
+        inventoryId: "weapon-attachments",
+        isWeaponInspection: true,
+        panel,
+        attachmentSlot: slot?.id,
+        isValid: distance <= 38 && inventoryState.attachmentPreview.status === "ready"
+      };
+    }
     const gridElement = document.elementFromPoint(pointer.x, pointer.y)?.closest(".grid");
     const inventory = gridElement && findInventory(gridElement.dataset.inventory);
     const item = getDraggedItem();
@@ -15134,8 +15275,25 @@
     const hoveredRow = Math.floor((pointer.y - gridBounds.top) / inventoryState.cellSize) + 1;
     const hoveredItem = inventory.items.find((candidate) => {
       const footprint = getItemFootprint(candidate);
-      return candidate.id !== item.id && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x && hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
+      return (inventory.id !== drag.inventoryId || candidate.id !== item.id) && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x && hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
     });
+    if (hoveredItem?.definition.container && inventory.type !== "shop" && findInventory(drag.inventoryId)?.type !== "shop") {
+      const rules = hoveredItem.definition.containerRules || {};
+      const canCarry = inventory.isOwn || inventory.isPlayerExtra || Boolean(inventory.metadata?.containerItem);
+      const isAllowed = (!rules.whitelist?.length || rules.whitelist.includes(item.name)) && !rules.blacklist?.includes(item.name);
+      const targetSize = getItemFootprint(hoveredItem);
+      return {
+        inventoryId: inventory.id,
+        containerItemId: hoveredItem.id,
+        isValid: Boolean(canCarry && isAllowed && hoveredItem.metadata?.containerId !== drag.inventoryId),
+        reason: "Item cannot be stored in this container",
+        highlight: { x: hoveredItem.x, y: hoveredItem.y, width: targetSize.x, height: targetSize.y },
+        screenX: gridBounds.left + (hoveredItem.x - 1) * inventoryState.cellSize,
+        screenY: gridBounds.top + (hoveredItem.y - 1) * inventoryState.cellSize,
+        ghostWidth: targetSize.x * inventoryState.cellSize,
+        ghostHeight: targetSize.y * inventoryState.cellSize
+      };
+    }
     const craft = inventory.id === drag.inventoryId && hoveredItem && planCraft(inventory, item, hoveredItem);
     if (craft) return {
       inventoryId: inventory.id,
@@ -15201,6 +15359,7 @@
   function refreshDragPreview() {
     if (!inventoryState.drag) return;
     inventoryState.destination = calculateDestination();
+    updateAttachmentDrag();
     publishChanges();
   }
   function scrollDuringDrag() {
@@ -15232,6 +15391,7 @@
     dragAnimationFrame = requestAnimationFrame(scrollDuringDrag);
   }
   function cancelItemDrag(shouldPublish = true) {
+    stopAttachmentDrag();
     pressedItem = null;
     inventoryState.drag = null;
     inventoryState.destination = null;
@@ -15251,7 +15411,7 @@
         inventoryState.pointer.x,
         inventoryState.pointer.y
       );
-      const isWorldBackground = pointerElement?.closest("#inventory") && !pointerElement.closest(".window, #dialog, #context, footer");
+      const isWorldBackground = pointerElement?.closest("#inventory") && !pointerElement.closest(".window, .weapon-inspection, #dialog, #context, footer");
       if (isWorldBackground && (sourceInventory.type === "player" && sourceInventory.isOwn !== false || sourceInventory.isPlayerExtra === true)) {
         requestItemAction(sourceInventory, item, "drop", {
           amount: drag.quantity,
@@ -15260,7 +15420,28 @@
       }
       return;
     }
+    if (destination.isWeaponInspection && !destination.isValid) return;
     if (!destination.isValid) return showNotice(destination.reason);
+    if (destination.attachmentSlot) {
+      const panel = destination.panel;
+      void requestItemAction(sourceInventory, item, "installAttachment", {
+        weaponInventoryId: panel.inventoryId,
+        weaponItemId: panel.itemId,
+        weaponRevision: panel.revision,
+        slot: destination.attachmentSlot
+      });
+      return;
+    }
+    if (destination.containerItemId) {
+      const carrier = findInventory(destination.inventoryId);
+      if (carrier) void requestItemAction(sourceInventory, item, "storeInContainer", {
+        amount: drag.quantity,
+        containerInventoryId: carrier.id,
+        containerRevision: carrier.revision,
+        containerItemId: destination.containerItemId
+      });
+      return;
+    }
     const targetInventory = findInventory(destination.inventoryId);
     if (destination.craft) {
       void requestItemAction(sourceInventory, item, "craft", {
@@ -15308,8 +15489,7 @@
     Object.assign(getInventoryLayout(inventory), {
       dock: null,
       x: 100,
-      y: 100,
-      minimised: false
+      y: 100
     });
     saveLayout();
     publishChanges();
@@ -15378,6 +15558,7 @@
     else showNotice("Window positions reset");
   }
   function applyWindowReset() {
+    stopWeaponRotation();
     inventoryState.layouts = {};
     inventoryState.activeTabs = {};
     pendingLayoutIds.clear();
@@ -15407,6 +15588,8 @@
     if (inventoryState.crafting || inventoryState.craftingPending) return;
     await layoutSavePromise;
     inventoryState.isOpen = false;
+    inventoryState.attachmentPanel = null;
+    stopWeaponRotation();
     inventoryState.dialog = null;
     clearPopups();
     cancelItemDrag(false);
@@ -15419,6 +15602,11 @@
     await sendNuiRequest("close");
   }
   function handlePointerMove(pointerEvent) {
+    if (weaponRotationDrag) {
+      weaponRotationDrag.x = pointerEvent.clientX;
+      weaponRotationDrag.y = pointerEvent.clientY;
+      return;
+    }
     inventoryState.pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
     if (dialogDrag) {
       const dialogBounds = document.getElementById("dialog").getBoundingClientRect();
@@ -15492,6 +15680,10 @@
     publishChanges();
   }
   function handlePointerUp(pointerEvent) {
+    if (weaponRotationDrag && pointerEvent.button === 0) {
+      stopWeaponRotation(pointerEvent);
+      return;
+    }
     if (pointerEvent.button !== 0) return;
     pressedItem = null;
     dialogDrag = null;
@@ -15505,7 +15697,6 @@
         innerHeight
       ) : null;
       inventoryState.layouts[windowDrag.inventoryId].dock = dockSlotId;
-      inventoryState.layouts[windowDrag.inventoryId].minimised = false;
       if (dockSlotId)
         inventoryState.activeTabs[dockSlotId] = windowDrag.inventoryId;
       saveLayout();
@@ -15586,6 +15777,11 @@
       dialogControls[nextControlIndex]?.focus();
       return;
     }
+    if (keyboardEvent.key === "Escape" && inventoryState.attachmentPanel && !inventoryState.drag && !inventoryState.dialog) {
+      keyboardEvent.preventDefault();
+      closeWeaponAttachments();
+      return;
+    }
     const drag = inventoryState.drag;
     if (drag && keyboardEvent.code === "KeyR" && !keyboardEvent.repeat) {
       keyboardEvent.preventDefault();
@@ -15618,7 +15814,31 @@
   function handleServerMessage(messageEvent) {
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "crafting") {
+    if (message.type === "attachments") {
+      const previousPanel = inventoryState.attachmentPanel;
+      inventoryState.attachmentPanel = message.panel || null;
+      if (!message.panel || previousPanel?.inventoryId !== message.panel.inventoryId || previousPanel?.itemId !== message.panel.itemId) {
+        inventoryState.attachmentPreview = { status: "loading", anchors: {} };
+        stopWeaponRotation();
+      }
+      publishChanges();
+    } else if (message.type === "weaponDragModel") {
+      const panel = inventoryState.attachmentPanel;
+      const drag = inventoryState.attachmentDrag;
+      if (!panel || panel.inventoryId !== message.inventoryId || panel.itemId !== message.itemId || !drag || drag.name !== message.attachmentName) return;
+      inventoryState.attachmentDrag = { ...drag, ready: message.ready === true };
+      publishChanges();
+    } else if (message.type === "weaponPreview") {
+      const panel = inventoryState.attachmentPanel;
+      if (!panel || panel.inventoryId !== message.inventoryId || panel.itemId !== message.itemId) return;
+      inventoryState.attachmentPreview = {
+        ...inventoryState.attachmentPreview,
+        status: message.status,
+        message: message.message,
+        anchors: message.anchors || inventoryState.attachmentPreview.anchors
+      };
+      publishChanges();
+    } else if (message.type === "crafting") {
       inventoryState.crafting = message.craft || null;
       inventoryState.craftingPending = false;
       clearPopups();
@@ -15717,6 +15937,7 @@
       inventoryState.inventories = message.inventories || [];
       inventoryState.visibleMetadata = message.visibleMetadata || {};
       inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
+      inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
       inventoryState.cellSize = message.cellSize || 48;
       inventoryState.isOpen = true;
       inventoryState.inventories.forEach(getInventoryLayout);
@@ -15738,6 +15959,8 @@
     } else if (message.type === "close") {
       inventoryState.isOpen = false;
       inventoryState.settingsOpen = false;
+      inventoryState.attachmentPanel = null;
+      stopWeaponRotation();
       inventoryState.dialog = null;
       windowDrag = null;
       inventoryState.isDockKeyHeld = false;
@@ -15752,6 +15975,7 @@
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", () => {
       dialogDrag = null;
+      stopWeaponRotation();
       windowDrag = null;
       inventoryState.isDockKeyHeld = false;
       refreshDockingPreview();
@@ -15778,6 +16002,7 @@
     });
     window.addEventListener("message", handleServerMessage);
     window.addEventListener("blur", () => {
+      stopWeaponRotation();
       dialogDrag = null;
       windowDrag = null;
       inventoryState.isDockKeyHeld = false;
@@ -15786,6 +16011,8 @@
     });
     window.addEventListener("resize", () => {
       inventoryState.viewport = { width: innerWidth, height: innerHeight };
+      const panel = inventoryState.attachmentPanel;
+      if (panel) void sendNuiRequest("weaponPreviewViewport", { inventoryId: panel.inventoryId, itemId: panel.itemId });
       refreshDockingPreview();
       if (inventoryState.dialog?.position) {
         const dialogBounds = document.getElementById("dialog").getBoundingClientRect();
@@ -15960,7 +16187,7 @@
   }
   function PlacementCells({ inventory }) {
     const destination = inventoryState.destination;
-    if (!destination || destination.inventoryId !== inventory.id) return null;
+    if (!destination || destination.attachmentSlot || destination.inventoryId !== inventory.id) return null;
     const highlight = destination.highlight;
     const cells = [];
     for (let row = highlight.y; row < highlight.y + highlight.height; row += 1) {
@@ -16109,6 +16336,12 @@
   }
   function WindowControls({ inventory, isDocked }) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "controls", children: [
+      inventory.type !== "shop" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Repack inventory", onClick: () => repackInventory(inventory), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 2h12" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "2", y: "4", width: "5", height: "4" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "9", y: "4", width: "5", height: "4" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "2", y: "10", width: "12", height: "4" })
+      ] }) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         WindowButton,
         {
@@ -16117,12 +16350,12 @@
           children: "\u25A3"
         }
       ),
-      !isDocked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         WindowButton,
         {
-          label: "Minimise",
+          label: getInventoryLayout(inventory).minimised ? "Restore" : "Minimise",
           onClick: () => toggleMinimised(inventory),
-          children: "\u2212"
+          children: getInventoryLayout(inventory).minimised ? "+" : "\u2212"
         }
       ),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -16147,7 +16380,7 @@
       left: dockBounds.x,
       top: dockBounds.y,
       width: dockBounds.width,
-      height: dockBounds.height
+      height: layout.minimised ? void 0 : dockBounds.height
     } : {
       left: Math.max(0, Math.min(innerWidth - 180, layout.x)),
       top: Math.max(0, Math.min(innerHeight - 40, layout.y)),
@@ -16161,7 +16394,7 @@
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
-        className: `window${isDocked ? " docked" : layout.minimised ? " minimised" : ""}`,
+        className: `window${isDocked ? " docked" : ""}${layout.minimised ? " minimised" : ""}`,
         onPointerDownCapture: () => touchInventory(inventory),
         "data-dock": dockSlotId || void 0,
         "data-inventory": isDocked ? void 0 : inventory.id,
@@ -16280,8 +16513,28 @@
             )
           ] }),
           Object.entries(inventoryState.visibleMetadata).map(
-            ([metadataKey, metadataLabel]) => {
+            ([metadataKey, metadataSettings]) => {
               const metadataValue = item.metadata?.[metadataKey];
+              const metadataLabel = metadataSettings?.label || (typeof metadataSettings === "string" ? metadataSettings : metadataKey);
+              const progressValue = typeof metadataValue === "number" || typeof metadataValue === "string" && metadataValue.trim() !== "" ? Number(metadataValue) : NaN;
+              if (metadataSettings?.progress === true && Number.isFinite(progressValue)) {
+                const progressAmount = Math.min(100, Math.max(0, progressValue));
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "detail metadata-progress-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: metadataLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "div",
+                    {
+                      className: "metadata-progress",
+                      role: "progressbar",
+                      "aria-label": metadataLabel,
+                      "aria-valuemin": 0,
+                      "aria-valuemax": 100,
+                      "aria-valuenow": progressAmount,
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "metadata-progress-fill", style: { width: `${progressAmount}%` } })
+                    }
+                  )
+                ] }, metadataKey);
+              }
               return metadataValue === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 DetailRow,
                 {
@@ -16300,12 +16553,16 @@
     const contextMenu = inventoryState.contextMenu;
     if (!contextMenu) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "context", hidden: true });
     const { inventory, item } = contextMenu;
+    if (contextMenu.attachmentSlot) {
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClampedPopup, { popupId: "context", position: contextMenu, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => removeWeaponAttachment(contextMenu.attachmentSlot), children: "Disassemble" }) });
+    }
     const binding = getItemBinding(item.name);
     const isCapturing = inventoryState.keybindCapture?.inventoryId === inventory.id && inventoryState.keybindCapture?.itemId === item.id;
     const canDrop = inventory.type === "player" && inventory.isOwn !== false || inventory.isPlayerExtra === true;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
       inventory.type === "shop" ? item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
+        inventoryState.weaponSystemEnabled && item.definition.weapon && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openWeaponAttachments(inventory, item), children: "Attachments" }),
         (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
           "Unbind key (",
           binding.keyLabel,
@@ -16427,11 +16684,11 @@
     const drag = inventoryState.drag;
     const destination = inventoryState.destination;
     const item = destination?.craft?.item || getDraggedItem();
-    if (!drag || !item) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "drag-ghost", hidden: true });
+    if (!drag || !item || destination?.isWeaponInspection && inventoryState.attachmentDrag?.ready) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "drag-ghost", hidden: true });
     const size = getItemFootprint(item, destination?.craft ? false : drag.isRotated);
     const ghostStyle = {
-      width: size.x * inventoryState.cellSize,
-      height: size.y * inventoryState.cellSize,
+      width: destination?.ghostWidth || size.x * inventoryState.cellSize,
+      height: destination?.ghostHeight || size.y * inventoryState.cellSize,
       left: destination?.screenX ?? inventoryState.pointer.x - drag.offsetX * inventoryState.cellSize,
       top: destination?.screenY ?? inventoryState.pointer.y - drag.offsetY * inventoryState.cellSize
     };
@@ -16443,10 +16700,55 @@
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item, isRotated: destination?.craft ? false : drag.isRotated, isGhost: true }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: destination?.craft ? 1 : drag.quantity })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: destination?.craft || destination?.attachmentSlot ? 1 : drag.quantity })
         ]
       }
     );
+  }
+  function WeaponAttachmentWindow() {
+    const panel = inventoryState.attachmentPanel;
+    if (!panel) return null;
+    const preview = inventoryState.attachmentPreview;
+    const destination = inventoryState.destination;
+    const draggedItem = getDraggedItem();
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "weapon-inspection", "aria-label": "Weapon attachments", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          className: "weapon-rotation-surface",
+          onPointerDown: startWeaponRotation,
+          "aria-label": "Drag to rotate weapon"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "header weapon-inspection-header", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "title", children: panel.weapon.definition.label }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "controls", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Close attachments", onClick: closeWeaponAttachments, children: "\xD7" }) })
+      ] }),
+      preview.status !== "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "weapon-preview-status", role: "status", children: preview.status === "error" ? preview.message || "Weapon model unavailable" : "Loading weapon\u2026" }),
+      panel.slots.map((slot) => {
+        const anchor = preview.anchors[slot.id];
+        if (!anchor || preview.status !== "ready") return null;
+        const isCompatible = Boolean(draggedItem && slot.compatibleItems.includes(draggedItem.name));
+        const isHighlighted = isCompatible && destination?.isWeaponInspection;
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: `weapon-part-target${isHighlighted ? " highlighted" : ""}${isHighlighted && destination.isValid ? " placement-ready" : ""}${slot.installed ? " installed" : ""}`,
+            style: {
+              left: `${anchor.x * 100}%`,
+              top: `${anchor.y * 100}%`,
+              pointerEvents: draggedItem ? isCompatible ? "auto" : "none" : slot.installed ? "auto" : "none"
+            },
+            "data-attachment-slot": slot.id,
+            "aria-label": `${slot.label} attachment point`,
+            onPointerDown: (pointerEvent) => pointerEvent.stopPropagation(),
+            onContextMenu: (pointerEvent) => openInstalledAttachmentMenu(slot, pointerEvent)
+          },
+          slot.id
+        );
+      })
+    ] });
   }
   function DockingSlots() {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -16602,6 +16904,7 @@
           style: { "--cell": `${inventoryState.cellSize}px` },
           children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWorkspace, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WeaponAttachmentWindow, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DockingSlots, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemTooltip, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemContextMenu, {}),

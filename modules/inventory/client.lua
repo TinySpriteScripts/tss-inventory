@@ -19,6 +19,7 @@ end
 local function closeInventory(shouldNotifyServer)
     if isCrafting and shouldNotifyServer ~= false then return false end
     isOpen = false
+    if TSSInventoryClient and TSSInventoryClient.WeaponPreview then TSSInventoryClient.WeaponPreview.Close() end
     SetNuiFocus(false, false)
     SendNUIMessage({ type = 'close' })
     if shouldNotifyServer ~= false then TriggerServerEvent('tss-inventory:closeSession') end
@@ -59,11 +60,17 @@ RegisterNetEvent('tss-inventory:crafting', function(craft)
     SendNUIMessage({ type = 'crafting', craft = craft })
 end)
 
+RegisterNetEvent('tss-inventory:attachments', function(panel)
+    if source ~= 65535 then return end
+    if TSSInventoryClient and TSSInventoryClient.WeaponPreview then TSSInventoryClient.WeaponPreview.Open(panel) end
+    SendNUIMessage({ type = 'attachments', panel = panel })
+end)
+
 RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, cellSize)
     if source ~= 65535 then return end
     isOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity })
+    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity, weaponSystemEnabled = Config.EnableWeaponSystem == true })
 end)
 
 RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
@@ -141,6 +148,7 @@ RegisterNUICallback('settingsClosed', function(request, callback)
 end)
 
 RegisterNUICallback('useItemKey', function(request, callback)
+    if TSSInventoryClient and TSSInventoryClient.FlushWeaponAmmo then TSSInventoryClient.FlushWeaponAmmo() end
     TriggerServerEvent('tss-inventory:useItemKey', request.keyCode)
     callback({ ok = true })
 end)
@@ -157,13 +165,20 @@ RegisterNUICallback('closeInventory', function(request, callback)
 end)
 
 RegisterNUICallback('action', function(request, callback)
+    if TSSInventoryClient and TSSInventoryClient.FlushWeaponAmmo then TSSInventoryClient.FlushWeaponAmmo() end
     nextRequestId = nextRequestId + 1
     local requestId = nextRequestId
     if request.kind == 'craft' then
         isCrafting = true
         pendingCraftRequestId = requestId
     end
-    pendingRequests[requestId] = callback
+    pendingRequests[requestId] = function(result)
+        if result.ok and request.kind == 'installAttachment' and (request.slot == 'finish' or request.slot == 'tint')
+            and TSSInventoryClient and TSSInventoryClient.WeaponPreview then
+            TSSInventoryClient.WeaponPreview.PaintApplied(request.weaponInventoryId, request.weaponItemId, request.slot)
+        end
+        callback(result)
+    end
     TriggerServerEvent('tss-inventory:action', requestId, request)
     SetTimeout(10000, function()
         if pendingRequests[requestId] then
@@ -235,6 +250,7 @@ CreateThread(function()
                 if keyCode and keyCode ~= 27 then
                     local isDown = IsRawKeyDown(keyCode)
                     if canUseKeys and isDown and not pressedItemKeys[keyCode] then
+                        if TSSInventoryClient and TSSInventoryClient.FlushWeaponAmmo then TSSInventoryClient.FlushWeaponAmmo() end
                         TriggerServerEvent('tss-inventory:useItemKey', keyCode)
                     end
                     pressedItemKeys[keyCode] = isDown

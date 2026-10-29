@@ -10,6 +10,9 @@ shared_scripts {
     'config.lua',
     'modules/inventory/items.lua',
     'data/items.lua',
+    'data/weapons.lua',
+    'data/attachments.lua',
+    'modules/weapons/definitions.lua',
     'data/containers.lua',
     'data/vehicles.lua',
     'data/vehicle_models.lua',
@@ -20,8 +23,11 @@ shared_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'modules/inventory/core.lua',
+    'modules/inventory/packing.lua',
     'modules/crafting/server.lua',
     'modules/money/server.lua',
+    'modules/weapons/server.lua',
+    'modules/weapons/attachments.lua',
     'modules/inventory/database.lua',
     'modules/inventory/weight.lua',
     'modules/inventory/exports.lua',
@@ -36,7 +42,10 @@ client_scripts {
     'modules/inventory/client.lua',
     'modules/shops/client.lua',
     'modules/drops/client.lua',
-    'modules/storage/client.lua'
+    'modules/storage/client.lua',
+    'modules/weapons/client.lua',
+    'modules/weapons/paint.lua',
+    'modules/weapons/preview.lua'
 }
 
 ui_page 'web/index.html'

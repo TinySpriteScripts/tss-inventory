@@ -57,7 +57,15 @@ end
 -- Resolve display labels on copies; shared item definitions stay unchanged.
 function inventoryCore.itemDefinition(item)
     local definition = inventoryCore.definition(item.name)
-    if definition then definition.label = TSSItemExports.Label(item.metadata, definition.label or item.name) end
+    if definition then
+        definition.label = TSSItemExports.Label(item.metadata, definition.label or item.name)
+        if TSSWeaponData then definition.weight = definition.weight + TSSWeaponData.AttachedWeight(item) end
+        if definition.container and TSSContainers and TSSContainers[definition.container] then
+            local container = TSSContainers[definition.container]
+            definition.containerRules = { whitelist = inventoryCore.copy(container.whitelist or {}),
+                blacklist = inventoryCore.copy(container.blacklist or {}) }
+        end
+    end
     return definition
 end
 
@@ -130,7 +138,7 @@ function inventoryCore.weight(inventory, overrides, visitedInventories)
     local totalWeight = 0
     for _, item in ipairs(inventory.items) do
         local definition = inventoryCore.definition(item.name)
-        totalWeight = totalWeight + definition.weight * item.amount
+        totalWeight = totalWeight + (definition.weight + (TSSWeaponData and TSSWeaponData.AttachedWeight(item) or 0)) * item.amount
         local containerId = definition.container and item.metadata and item.metadata.containerId
         if Config.DynamicContainerWeight and type(containerId) == 'string' and inventoryCore.resolveInventory then
             local container = overrides[containerId] or inventoryCore.resolveInventory(containerId)
@@ -155,7 +163,7 @@ local function validatePlannedWeight(plannedInventories)
     return true
 end
 
-function inventoryCore.add(inventory, itemName, amount, metadata, isRotated)
+function inventoryCore.add(inventory, itemName, amount, metadata, isRotated, weightOverrides)
     local definition = inventoryCore.definition(itemName)
     if not definition then return false, 'Unknown item' end
     if not inventoryCore.integer(amount, 1, 100000) then return false, 'Invalid amount' end
@@ -163,7 +171,11 @@ function inventoryCore.add(inventory, itemName, amount, metadata, isRotated)
     if not inventoryCore.allowed(inventory, itemName) then return false, 'Item is not allowed in this inventory' end
 
     local plannedInventory = inventoryCore.copy(inventory)
-    metadata = inventoryCore.copy(metadata or definition.metadata)
+    local defaultMetadata = inventoryCore.copy(definition.metadata or {})
+    for metadataKey, metadataValue in pairs(metadata or {}) do
+        defaultMetadata[metadataKey] = inventoryCore.copy(metadataValue)
+    end
+    metadata = defaultMetadata
 
     for _, item in ipairs(plannedInventory.items) do
         if definition.stack and item.name == itemName and inventoryCore.equal(item.metadata, metadata) then
@@ -187,7 +199,10 @@ function inventoryCore.add(inventory, itemName, amount, metadata, isRotated)
         amount = amount - item.amount
     end
 
-    local weightValid, weightError = validatePlannedWeight({ [plannedInventory.id] = plannedInventory })
+    local plannedWeights = {}
+    for inventoryId, planned in pairs(weightOverrides or {}) do plannedWeights[inventoryId] = planned end
+    plannedWeights[plannedInventory.id] = plannedInventory
+    local weightValid, weightError = validatePlannedWeight(plannedWeights)
     if not weightValid then return false, weightError end
     inventory.items = plannedInventory.items
     inventory.nextItemId = plannedInventory.nextItemId

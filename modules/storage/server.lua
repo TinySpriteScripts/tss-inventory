@@ -30,6 +30,7 @@ function TSSCreateStorageService(context)
     ensureVehicleBridge()
 
     local vehicleGrants = {}
+    local openedTrunks = {}
     local storageService = {}
     local modelOverrides = {}
     local classNames = {}
@@ -104,7 +105,18 @@ function TSSCreateStorageService(context)
         context.commit(inventory)
         vehicleGrants[playerSource] = vehicleGrants[playerSource] or {}
         vehicleGrants[playerSource][inventoryId] = { networkId = networkId, compartment = compartment, plate = info.plate, model = info.model }
-        return context.open(playerSource, inventoryId)
+        local opened, openError = context.open(playerSource, inventoryId)
+        if not opened then
+            vehicleGrants[playerSource][inventoryId] = nil
+            return false, openError
+        end
+        if compartment == 'trunk' then
+            if not openedTrunks[inventoryId] then
+                openedTrunks[inventoryId] = { networkId = networkId, plate = info.plate, model = info.model }
+                TriggerClientEvent('tss-inventory:trunkDoor', -1, networkId, true, info.plate, info.model)
+            end
+        end
+        return true
     end
 
     function storageService.OpenCurrentGlovebox(playerSource)
@@ -156,7 +168,7 @@ function TSSCreateStorageService(context)
         return inventory.type ~= 'trunk' and inventory.type ~= 'glovebox'
     end
 
-    function storageService.OpenItem(playerSource, sourceInventory, itemId)
+    function storageService.ResolveItem(playerSource, sourceInventory, itemId)
         if not context.sessions[playerSource] or not context.sessions[playerSource][sourceInventory.id]
             or not storageService.CanAccess(playerSource, sourceInventory.id) then return false, 'Inventory access denied' end
         local item = inventoryCore.find(sourceInventory, itemId)
@@ -167,14 +179,23 @@ function TSSCreateStorageService(context)
         if sourceInventory.id ~= context.identity(playerSource) and not sourceInventory.metadata.containerItem
             and not (sourceInventory.type == 'extra' and context.extraAccess(playerSource, sourceInventory.id)) then return false, 'Carry the item before opening it' end
         local containerId = item.metadata.containerId
-        if containerId == nil then
-            containerId = ('%s_%x%x'):format(definition.container, os.time(), math.random(1, 0x7fffffff))
+        local container = type(containerId) == 'string' and context.load(containerId)
+        local missingLinkedContainer = type(containerId) == 'string'
+            and containerId:sub(1, #definition.container + 1) == definition.container .. '_' and not container
+        if containerId == nil or missingLinkedContainer then
+            containerId = containerId or ('%s_%x%x'):format(definition.container, os.time(), math.random(1, 0x7fffffff))
             local created, creationError = context.createLinked(playerSource, sourceInventory, item, definition.container, containerId)
             if not created then return false, creationError end
+            container = context.load(containerId)
         end
-        local container = type(containerId) == 'string' and context.load(containerId)
         if not container or container.type ~= definition.container or container.metadata.containerItem ~= item.name then return false, 'Container link is invalid' end
         if not carriesContainer(playerSource, container.id) then return false, 'You no longer carry this container' end
+        return container
+    end
+
+    function storageService.OpenItem(playerSource, sourceInventory, itemId)
+        local container, containerError = storageService.ResolveItem(playerSource, sourceInventory, itemId)
+        if not container then return false, containerError end
         return context.open(playerSource, container.id)
     end
 
@@ -200,6 +221,24 @@ function TSSCreateStorageService(context)
         return not containsTarget(linkedId, 0)
     end
 
+    function storageService.RefreshTrunks()
+        for inventoryId, trunk in pairs(openedTrunks) do
+            local hasViewer = false
+            for playerSource, inventorySession in pairs(context.sessions) do
+                local grant = vehicleGrants[playerSource] and vehicleGrants[playerSource][inventoryId]
+                if inventorySession[inventoryId] and grant and grant.networkId == trunk.networkId
+                    and grant.plate == trunk.plate and grant.model == trunk.model and storageService.CanAccess(playerSource, inventoryId) then
+                    hasViewer = true
+                    break
+                end
+            end
+            if not hasViewer then
+                openedTrunks[inventoryId] = nil
+                TriggerClientEvent('tss-inventory:trunkDoor', -1, trunk.networkId, false, trunk.plate, trunk.model)
+            end
+        end
+    end
+
     function storageService.RevokeInvalid()
         for playerSource, inventorySession in pairs(context.sessions) do
             local changed = false
@@ -208,9 +247,13 @@ function TSSCreateStorageService(context)
             end
             if changed then context.send(playerSource) end
         end
+        storageService.RefreshTrunks()
     end
 
-    function storageService.PlayerDisconnected(playerSource) vehicleGrants[playerSource] = nil end
+    function storageService.PlayerDisconnected(playerSource)
+        vehicleGrants[playerSource] = nil
+        storageService.RefreshTrunks()
+    end
 
     return storageService
 end

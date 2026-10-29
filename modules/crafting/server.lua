@@ -9,16 +9,22 @@ function TSSCreateCraftingService(context)
         for resultName, recipe in pairs(TSSCrafting or {}) do
             local ingredients = type(recipe) == 'table' and recipe.input
             local duration = type(recipe) == 'table' and recipe.time
+            local resultDefinition = inventoryCore.definition(resultName)
+            local outputAmount = 1
+            if resultDefinition and resultDefinition.stack and type(recipe) == 'table' and recipe.output ~= nil then
+                outputAmount = recipe.output
+            end
             local ingredientCount = 0
             local valid = type(ingredients) == 'table' and type(duration) == 'number'
-                and duration > 0 and duration <= 3600 and inventoryCore.definition(resultName) ~= nil
+                and duration > 0 and duration <= 3600 and resultDefinition ~= nil
+                and inventoryCore.integer(outputAmount, 1, resultDefinition.stackSize)
             for itemName, amount in pairs(type(ingredients) == 'table' and ingredients or {}) do
                 ingredientCount = ingredientCount + 1
                 valid = valid and inventoryCore.definition(itemName) ~= nil and inventoryCore.integer(amount, 1, 100000)
             end
             if valid and ingredientCount == 2 then
                 recipes[#recipes + 1] = { name = resultName, input = inventoryCore.copy(ingredients),
-                    duration = math.ceil(duration * 1000), definition = inventoryCore.definition(resultName) }
+                    output = outputAmount, duration = math.ceil(duration * 1000), definition = resultDefinition }
             end
         end
         table.sort(recipes, function(firstRecipe, secondRecipe) return firstRecipe.name < secondRecipe.name end)
@@ -57,7 +63,7 @@ function TSSCreateCraftingService(context)
             or not inventoryCore.remove(plannedInventory, secondItem.id, recipe.input[secondItem.name]) then
             return false, 'Not enough ingredients in these stacks'
         end
-        local output = { id = plannedInventory.nextItemId, name = recipe.name, amount = 1,
+        local output = { id = plannedInventory.nextItemId, name = recipe.name, amount = recipe.output,
             metadata = inventoryCore.copy(recipe.definition.metadata), rotated = false }
         if inventoryCore.fits(plannedInventory, output, secondItem.x, secondItem.y) then output.x, output.y = secondItem.x, secondItem.y
         elseif inventoryCore.fits(plannedInventory, output, firstItem.x, firstItem.y) then output.x, output.y = firstItem.x, firstItem.y
