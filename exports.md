@@ -4,7 +4,9 @@
 local inventory = exports['tss-inventory']
 ```
 
-All exports are server-side unless listed under Client.
+Call **server exports** from server scripts and **client exports** from client scripts. Some names exist on both sides with different arguments.
+
+[Server exports](#server-exports) | [Client exports](#client-exports)
 
 - `playerSource`: the player's server ID.
 - `inventoryId`: the inventory's saved ID, such as `player_ABC123` or `business_storage`.
@@ -15,7 +17,11 @@ All exports are server-side unless listed under Client.
 
 Most changes return `true` or `false, error`. Creation returns `true, inventory` or `false, error`. Item and inventory getters return copies. Load the character before calling player inventory exports.
 
-## Find inventories
+## Server exports
+
+These exports run on the server.
+
+### Find inventories
 
 | Export | Returns |
 | --- | --- |
@@ -25,7 +31,7 @@ Most changes return `true` or `false, error`. Creation returns `true, inventory`
 | `GetContainersByOwner(citizenId)` | A list of the character's containers. |
 | `GetInventoryType(typeName)` | The defaults for an inventory type. |
 
-## Create and open inventories
+### Create and open inventories
 
 | Export | Action |
 | --- | --- |
@@ -57,7 +63,7 @@ if created then
 end
 ```
 
-## Fixed stashes
+### Fixed stashes
 
 Add an entry with `coords` to `TSSContainers` in `data/containers.lua`:
 
@@ -103,7 +109,7 @@ To open one from another server script while the player is nearby:
 local opened, errorMessage = exports['tss-inventory']:OpenStash(playerSource, 'business_storage')
 ```
 
-## Temporary loot containers (server)
+### Temporary loot containers
 
 Use `CreateContainer('loot', options)` and open it with `OpenInventory`:
 
@@ -146,7 +152,7 @@ end
 
 Use `GetContainer(containerId)` to read it and `DeleteContainer(containerId)` to remove it manually. Failed creation returns `false, errorMessage`.
 
-### Item-backed loot containers
+#### Item-backed loot containers
 
 A container definition with an `items` table becomes temporary rolled loot. Link an item to it with `container = 'stolen_wallet'`, `stack = false`, `useable = true` and `shouldClose = false`. The `stolen_wallet` item is already defined with the wallet image.
 
@@ -173,7 +179,7 @@ With `deleteOnEmpty = true`, taking its last item deletes both the loot inventor
 /giveitem 1 stolen_wallet 1
 ```
 
-## Change inventories
+### Change inventories
 
 | Export | Action |
 | --- | --- |
@@ -189,11 +195,12 @@ With `deleteOnEmpty = true`, taking its last item deletes both the loot inventor
 
 Inventory metadata belongs to the inventory. Item metadata belongs to an individual item. Do not copy or change the container link fields `containerItem` and `containerId` yourself.
 
-## Check items
+### Check items
 
 | Export | Returns |
 | --- | --- |
-| `HasItem(target, items, amount?)` | Whether every requested item is present. Totals amounts across stacks. |
+| `HasItem(target, items, amount?)` | Check every requested item and amount. Player checks include the main inventory and enabled extra slots. |
+| `HasItems(target, items, amount?)` | Same check as `HasItem`, including lists and per-item amounts. |
 | `GetItemCount(target, items, exactMetadata?)` | Total amount of one item name or a list of names. |
 | `GetItemByName(target, itemName)` | The first matching item, or nil. |
 | `GetItemsByName(target, itemName)` | All matching items. |
@@ -209,11 +216,14 @@ Inventory metadata belongs to the inventory. Item metadata belongs to an individ
 inventory:HasItem(playerSource, 'bandage', 2)
 inventory:HasItem(playerSource, { 'bandage', 'water_bottle' }, 1)
 inventory:HasItem(playerSource, { bandage = 2, water_bottle = 1 })
+inventory:HasItems(playerSource, { bandage = 2, water_bottle = 1 })
 ```
 
 A player server ID checks the personal grid. Use the inventory ID to check an extra slot or backpack. Item getters also provide `slot` and `info`, matching the item's `id` and `metadata`.
 
-## Add, remove and move items
+Player checks total stacks across the main inventory and enabled extra slots, including equipment slots. They do not search inside backpacks or other nested containers. Passing a specific stash/container/extra inventory ID checks only that inventory. These exports check items; they do not remove them.
+
+### Add, remove and move items
 
 | Export | Action |
 | --- | --- |
@@ -244,7 +254,7 @@ inventory:RemoveItem(inventoryId, itemId, 1, true)
 
 The notification argument accepts true for the player's own or extra inventory, or a player server ID to notify someone specific. Omit it or pass false for no notification. This argument applies to the inventory-ID forms. Reason strings are accepted by the QB-style forms but do not create logs.
 
-## Custom labels
+### Custom labels
 
 `metadata.label` overrides an item or inventory's display name. Use nonempty text up to 100 bytes.
 
@@ -261,7 +271,7 @@ You can also supply label through AddItem, SetItemMetadata or SetInventoryMetada
 
 An item ID identifies a stack. Split it first to rename just one unit. Different labels prevent stacks from merging. A carried container's item label and its window title are separate; use the container's inventory ID to rename its window.
 
-## Usable items
+### Usable items
 
 | Export | Action |
 | --- | --- |
@@ -285,7 +295,7 @@ end)
 
 Start the registering script after tss-inventory. Restart it after restarting the inventory. A core function forwarding registrations should pass `GetInvokingResource()` as ownerResource.
 
-## Weight and slots
+### Weight and slots
 
 | Export | Returns |
 | --- | --- |
@@ -296,7 +306,7 @@ Start the registering script after tss-inventory. Restart it after restarting th
 | `GetSlotsByItem(items, itemName)` | Matching item IDs from a supplied item list. |
 | `GetFirstSlotByItem(items, itemName)` | The first matching item ID, or nil. |
 
-## Shops
+### Shops
 
 | Export | Action |
 | --- | --- |
@@ -306,7 +316,7 @@ Start the registering script after tss-inventory. Restart it after restarting th
 
 CreateShop products accept `name`, `buyPrice` (or legacy `price`), `sellPrice`, `buy`, `sell`, `amount` or `count`, and `info` or `metadata`. Shop-level `buy` and `sell` toggles are also supported. Coordinates are required. Each product name must be unique. Use `size={x=8}`; height is calculated automatically with a minimum of two rows. Use false for unlimited stock.
 
-### Buying and selling
+#### Buying and selling
 
 Directions are from the player's perspective: `buy` allows players to buy from the shop; `sell` allows players to sell to it.
 
@@ -340,7 +350,7 @@ example_shop = {
 `data/shops.lua` contains the converted public shop locations and editable product groups. Buy prices are from the supplied list; sell prices start at half, rounded down. Casino chips exchange 1:1. Ped spawning, targets and map blips use the bridge. `blip = { sprite = 52, colour = 2 }` is optional.
 
 
-## World drops
+### World drops
 
 | Export | Action |
 | --- | --- |
@@ -351,7 +361,7 @@ example_shop = {
 
 Drop items use `{name,amount?,metadata?,rotated?}`. World drops are not saved and disappear on restart. CreateDrop requires drops to be enabled. DropItem deletes items when WorldDrops.enable is false.
 
-## Extra inventory windows
+### Extra inventory windows
 
 Define defaults in Config.ExtraInventories. These windows open alongside the player's inventory.
 
@@ -377,7 +387,7 @@ inventory:CreateExtraInventory(playerSource, 'wallet_slot', {
 })
 ```
 
-## Window settings
+### Window settings
 
 | Export | Action |
 | --- | --- |
@@ -386,37 +396,24 @@ inventory:CreateExtraInventory(playerSource, 'wallet_slot', {
 
 Use false for a floating dock value. Dock positions: `left-top`, `left-bottom`, `right-top`, `right-bottom`, `top-left`, `top-right`, `bottom-left`, `bottom-right`.
 
-## Notifications
+Character settings also store `weaponHudPosition` and `itemBoxPosition` separately from inventory window layouts. Players set these through `/inventorysettings` > **Move displays**. Positions use screen-relative coordinates; `false` restores the default placement. Item notifications default to bottom centre. Saving and cancelling follow the settings window's normal behaviour.
 
-Server: `ItemBox(playerSource, itemName, action, amount?)`.
+### Notifications
 
-Client: `ItemBox(itemName, action, amount?)`.
+`ItemBox(playerSource, itemName, action, amount?)`.
 
-Use `added` or `removed` for action. The box displays an image and action text for 2.5 seconds. It does not add or remove items. Players choose its position with `/inventorysettings`.
 
-## Client
+Use `added` or `removed` for action. The box displays an image and action text for 2.5 seconds by default. It does not add or remove items. Players can toggle it, change its duration from 1–10 seconds and choose its position with `/inventorysettings`.
 
-| Export | Action |
-| --- | --- |
-| `HasItem(items, amount?)` | Check the local personal inventory. Same name/list/amount formats as the server. |
-| `GetLocalInventory()` | Get the local personal inventory, or nil before loading. |
-| `GetItemDefinitions()` | Get all item definitions. |
-| `OpenSelf()` | Request the player's inventory, plus a nearby trunk or occupied glovebox. |
-| `OpenShop(shopId)` | Request a shop. |
-| `CloseInventory()` | Close the UI. |
-| `ItemBox(itemName, action, amount?)` | Show an item notification. |
-
-Client opening exports return true when the request is sent. The server decides whether it can open.
-
-## Unsupported QB calls
+### Unsupported QB calls
 
 Use GetPlayerInventory instead of LoadInventory. TSS saves changes automatically, so SaveInventory is not needed. SetInventory, RemoveInventory, OpenInventoryById and the QB hook/listener exports are not provided.
 
-## Cash items
+### Cash items
 
 When `Config.MoneyAsItem` is enabled, adding or removing `cash` anywhere in an online player's carried inventory tree also changes their cash account. This includes extra slots and linked nested containers. Moving cash within that tree leaves the balance unchanged. Moving cash or a funded container out of the tree debits it; moving it back credits it. Cash edits to offline player inventories are refused. Payment scripts should perform one cash operation; syncing handles the matching account or item change.
 
-## Equipped weapons
+### Equipped weapons
 
 These exports apply to the built-in weapon system when `Config.EnableWeaponSystem` is enabled.
 
@@ -427,7 +424,7 @@ These exports apply to the built-in weapon system when `Config.EnableWeaponSyste
 
 Use the existing `UseItem(playerSource, selector)` export to equip or toggle a carried weapon. Loaded rounds use `metadata.ammo`; client reports can only decrease that value.
 
-## Weapon attachment inspection
+### Weapon attachment inspection
 
 | Export | Action |
 | --- | --- |
@@ -436,7 +433,7 @@ Use the existing `UseItem(playerSource, selector)` export to equip or toggle a c
 
 Installed parts are available through the normal item getters in `metadata.attachments`. Use `data/attachments.lua` to change compatible weapons and slot types. Attachment editing uses the built-in weapon system and requires `Config.EnableWeaponSystem = true`.
 
-## Clothing (server)
+### Clothing
 
 Requires `Config.EnableClothingSystem = true`.
 
@@ -449,3 +446,34 @@ local success, errorMessage = exports['tss-inventory']:UnequipClothing(playerSou
 ```
 
 `EquipClothing` moves a carried clothing item into its matching equipment slot. Replaced clothing returns to the main inventory. `UnequipClothing` returns the worn item to the main inventory. Both refuse the change if the returned item cannot fit. These exports are registered only when the clothing system is enabled.
+
+## Client exports
+
+These exports run on the player's client. They do not take a player server ID.
+
+| Export | Action |
+| --- | --- |
+| `HasItem(requirements, amount?)` | Check the local player's main inventory and enabled extra slots. Accepts a name, a list, or per-item amounts. |
+| `HasItems(requirements, amount?)` | Same check as `HasItem`. Every requested item must have the required amount. |
+| `GetLocalInventory()` | Get a copy of the local player's main inventory, or `nil` before loading. |
+| `GetItemDefinitions()` | Get the available item definitions. |
+| `OpenSelf()` | Request the player's inventory, plus nearby storage such as a trunk, glovebox or configured stash. |
+| `OpenShop(shopId)` | Request a configured shop. |
+| `CloseInventory()` | Close the local inventory interface. Crafting must finish or be cancelled first. |
+| `ItemBox(itemName, action, amount?)` | Show an `added` or `removed` item notification without changing the inventory. Amount defaults to `1`. |
+
+Client opening exports return `true` when the request is sent. The server checks whether the inventory can open. Client `HasItem` and `HasItems` check the locally cached main inventory and enabled extra slots; use the server version before granting rewards or removing items.
+
+```lua
+-- client.lua
+local inventory = exports['tss-inventory']
+
+local hasBandage = inventory:HasItem('bandage', 1)
+local hasIngredients = inventory:HasItems({ bandage = 2, plastic = 1 })
+local playerInventory = inventory:GetLocalInventory()
+
+inventory:OpenSelf()
+inventory:OpenShop('247supermarket_1')
+inventory:CloseInventory()
+inventory:ItemBox('bandage', 'added', 1)
+```

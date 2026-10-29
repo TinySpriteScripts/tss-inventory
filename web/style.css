@@ -597,7 +597,11 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 #inventory-settings {
-  width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
   background: rgba(17, 19, 22, 0.98);
   color: #ededed;
   border: 1px solid #34363a;
@@ -606,32 +610,44 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 #inventory-settings header {
+  flex-shrink: 0;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 2px solid #df4050;
+  padding: 0 16px;
+  border-bottom: 2px solid var(--red);
 }
 
-#inventory-settings button, #inventory-settings select {
+#inventory-settings button {
+  min-height: 32px;
+  padding: 7px 12px;
   background: #202226;
   color: #ededed;
   border: 1px solid #414349;
-  padding: 7px 12px;
   font: inherit;
+  cursor: pointer;
 }
 
-#inventory-settings button { cursor: pointer; }
+#inventory-settings button:hover { border-color: var(--red); }
 #inventory-settings button:disabled { opacity: 0.55; cursor: default; }
-#inventory-settings header button { padding: 2px 6px; border: none; background: none; }
-#inventory-settings .settings-content { padding: 16px; }
-#inventory-settings label { display: block; margin-bottom: 8px; }
-#inventory-settings select { width: 100%; }
-#inventory-settings p { color: #a3a5aa; margin: 8px 0 20px; }
-#inventory-settings .settings-reset { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-#inventory-settings .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-#inventory-settings .confirm { background: #cf3b4b; border-color: #cf3b4b; }
-#inventory-settings :focus-visible { outline: 1px solid #df4050; outline-offset: 2px; }
+#inventory-settings header button { display: grid; place-items: center; min-height: 28px; width: 28px; padding: 0; border: none; background: none; }
+#inventory-settings .settings-content { padding: 18px 16px; }
+#inventory-settings .settings-group + .settings-group { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ffffff15; }
+#inventory-settings h4 { margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+#inventory-settings p { margin: 0 0 12px; color: #a3a5aa; line-height: 1.5; }
+.settings-button-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-button-row button { flex: 1; }
+#inventory-settings .sound-mute { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+#inventory-settings .sound-mute input { width: 14px; height: 14px; margin: 0; accent-color: var(--red); }
+.settings-volume { margin-bottom: 14px; }
+.settings-volume label { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.settings-volume label span { color: #aaa; }
+#inventory-settings input[type="range"] { display: block; width: 100%; height: 16px; margin: 0; padding: 0; accent-color: var(--red); }
+#inventory-settings .settings-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 16px; border-top: 1px solid #ffffff15; }
+#inventory-settings .settings-actions button { min-width: 68px; }
+#inventory-settings .confirm { background: var(--red); border-color: var(--red); }
+#inventory-settings :focus-visible { outline: 1px solid var(--red); outline-offset: 2px; }
 
 .quantity-entry { display: flex; align-items: center; gap: 8px; }
 #dialog .quantity-entry input { min-width: 0; margin: 0; }
@@ -836,12 +852,65 @@ input[type="number"]::-webkit-outer-spin-button {
   box-shadow: 0 0 22px #53bb7650;
 }
 
-.settings-sounds { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #ffffff15; padding-top: 16px; }
-#inventory-settings .sound-mute { display: flex; align-items: center; gap: 8px; }
-#inventory-settings .sound-mute input { width: auto; margin: 0; accent-color: var(--red); }
-#inventory-settings input[type="range"] { width: 100%; padding: 0; accent-color: var(--red); }
-.settings-sounds label span { float: right; color: #aaa; }
-.settings-sounds button { align-self: flex-start; }
+
 
 .sell-price, .shop-sell-price { color: #78c694; }
 .shop-sell-price { top: 3px; bottom: auto; }
+
+.weapon-hud {
+  position: fixed;
+  width: 172px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(17, 19, 22, 0.88);
+  border-bottom: 2px solid var(--red);
+  pointer-events: none;
+  z-index: 190000;
+}
+.weapon-hud-image { display: flex; align-items: center; justify-content: center; width: 88px; height: 48px; }
+.weapon-hud-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.weapon-hud-image .fallback { font-size: 10px; }
+.weapon-hud-ammo { font-size: 19px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.weapon-hud-ammo small { color: #aaa; font-size: 12px; }
+.item-box-notifications { width: 150px; }
+.hud-preview { pointer-events: auto; cursor: grab; z-index: 200001; outline: 1px dashed #d94a5080; }
+.hud-preview:active { cursor: grabbing; }
+.hud-preview-label { position: absolute; left: 0; top: -20px; color: #ccc; font-size: 11px; pointer-events: none; }
+
+.settings-overlay { z-index: 200002; }
+.hud-position-toolbar {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200003;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px;
+  background: #111316f5;
+  border-top: 2px solid var(--red);
+}
+.hud-position-toolbar button { padding: 7px 18px; background: var(--red); color: #fff; }
+
+/* Size the grid and window controls without transforming pointer coordinates. */
+#inventory { font-size: calc(13px * var(--ui-scale, 1)); }
+#inventory .header { height: calc(34px * var(--ui-scale, 1)); }
+#inventory .header strong { font-size: inherit; }
+.settings-toggle { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; line-height: 1.4; }
+.settings-toggle input { margin: 0; accent-color: var(--red); }
+.settings-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.settings-field select { width: 150px; padding: 7px 10px; color: #eee; background: #202326; border: 1px solid #414448; font: inherit; }
+.drop-confirmation { line-height: 1.5; margin: 0 0 18px; }
+#inventory-settings .settings-content { overflow-y: auto; min-height: 0; }
+#inventory-settings .settings-actions { flex-shrink: 0; }
+#inventory .controls button { width: calc(25px * var(--ui-scale, 1)); font-size: calc(17px * var(--ui-scale, 1)); }
+#inventory .amount, #inventory .status, #inventory .item .fallback { font-size: calc(11px * var(--ui-scale, 1)); }
+#inventory .price { font-size: calc(11px * var(--ui-scale, 1)); }
+#inventory #tooltip { width: calc(240px * var(--ui-scale, 1)); }
+#inventory #tooltip h3, #inventory .purchase-total { font-size: calc(14px * var(--ui-scale, 1)); }
+#inventory #tooltip p, #inventory .detail { font-size: calc(12px * var(--ui-scale, 1)); }

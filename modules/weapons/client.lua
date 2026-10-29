@@ -6,6 +6,26 @@ local reloadPending = false
 local lastReport = 0
 local wasShooting = false
 
+local lastHudSignature = nil
+
+local function updateWeaponHud()
+    if not equippedWeapon then
+        if lastHudSignature ~= 'none' then SendNUIMessage({ type = 'equippedWeapon', weapon = false }) end
+        lastHudSignature = 'none'
+        return
+    end
+    local weaponName = equippedWeapon.name or equippedWeapon.weapon
+    local definition = TSSItems and TSSItems[weaponName] or {}
+    local image = equippedWeapon.image or definition.image
+    local label = equippedWeapon.label or definition.label or weaponName
+    local showAmmo = equippedWeapon.clipSize > 0 and equippedWeapon.ammoMode ~= 'melee' and equippedWeapon.ammoMode ~= 'rechargeable'
+    local signature = table.concat({ weaponName, image or '', label, tostring(equippedWeapon.ammo), tostring(equippedWeapon.clipSize), tostring(showAmmo) }, '|')
+    if signature == lastHudSignature then return end
+    lastHudSignature = signature
+    SendNUIMessage({ type = 'equippedWeapon', weapon = { name = weaponName, label = label,
+        image = image, ammo = equippedWeapon.ammo, clipSize = equippedWeapon.clipSize, showAmmo = showAmmo } })
+end
+
 local function reportAmmo()
     if not equippedWeapon or reloadPending or equippedWeapon.clipSize == 0 then return end
     local ammo = GetAmmoInPedWeapon(PlayerPedId(), equippedWeapon.hash)
@@ -14,6 +34,7 @@ local function reportAmmo()
         SetAmmoInClip(PlayerPedId(), equippedWeapon.hash, equippedWeapon.ammo)
     elseif ammo < equippedWeapon.ammo then
         equippedWeapon.ammo = ammo
+        updateWeaponHud()
         TriggerServerEvent('tss-inventory:weaponAmmo', equippedWeapon.token, ammo)
     end
 end
@@ -34,6 +55,7 @@ local function clearWeapon()
     wasShooting = false
     SetWeaponsNoAutoreload(false)
     SetWeaponsNoAutoswap(false)
+    updateWeaponHud()
 end
 
 RegisterNetEvent('tss-inventory:weapon', function(state)
@@ -90,6 +112,7 @@ RegisterNetEvent('tss-inventory:weapon', function(state)
             end
         end)
     end
+    updateWeaponHud()
 end)
 
 CreateThread(function()

@@ -18,10 +18,21 @@ function TSSRegisterItemExports(context)
         return items
     end
 
-    context.export('HasItem', function(identifier, requirements, amount)
+    local function hasItems(identifier, requirements, amount)
         local inventory = inventoryFor(identifier)
-        return inventory and helpers.HasItem(inventory.items, requirements, amount) or false
-    end)
+        if not inventory then return false end
+        local items = {}
+        for _, item in ipairs(inventory.items) do items[#items + 1] = item end
+        if inventory.type == 'player' and context.extraRoots then
+            for _, extra in ipairs(context.extraRoots(inventory)) do
+                for _, item in ipairs(extra.items) do items[#items + 1] = item end
+            end
+        end
+        return helpers.HasItem(items, requirements, amount)
+    end
+
+    context.export('HasItem', hasItems)
+    context.export('HasItems', hasItems)
 
     context.export('CanAddItem', function(identifier, itemName, amount, metadata)
         local inventory = inventoryFor(identifier)

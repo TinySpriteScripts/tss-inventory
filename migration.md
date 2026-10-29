@@ -38,7 +38,7 @@ function QBCore.Functions.HasItem(playerSource, items, amount)
 end
 ```
 
-These accept an item name, a list, or amounts such as `{bandage=2}`. They check the personal inventory. Check items on the server before granting an effect or reward.
+These accept an item name, a list, or amounts such as `{bandage=2}`. They check the personal inventory and enabled extra slots. `HasItems` accepts the same arguments. Check items on the server before granting an effect or reward.
 
 ## 3. Replace QBCore item-use functions
 

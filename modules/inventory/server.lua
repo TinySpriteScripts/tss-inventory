@@ -164,11 +164,25 @@ local notificationPositions = {
     ['bottom-left'] = true, ['bottom-center'] = true, ['bottom-right'] = true,
 }
 
+local function validHudPosition(position)
+    return type(position) == 'table' and type(position.x) == 'number' and type(position.y) == 'number'
+        and position.x == position.x and position.y == position.y
+        and position.x >= 0 and position.x <= 1 and position.y >= 0 and position.y <= 1
+end
+
 local function getPlayerPreferences(inventory)
     local preferences = inventory and inventory.settings and inventory.settings.preferences or {}
     return {
-        notificationPosition = notificationPositions[preferences.notificationPosition] and preferences.notificationPosition or 'middle-right',
+        notificationPosition = 'bottom-center',
+        weaponDisplay = preferences.weaponDisplay ~= false,
+        itemNotifications = preferences.itemNotifications ~= false,
+        notificationDuration = inventoryCore.integer(preferences.notificationDuration, 1000, 10000) and preferences.notificationDuration or 2500,
+        confirmDropping = preferences.confirmDropping == true,
+        rememberContainers = preferences.rememberContainers == true,
+        uiScale = ({ small = true, medium = true, large = true })[preferences.uiScale] and preferences.uiScale or 'small',
         windowLayoutVersion = tonumber(preferences.windowLayoutVersion) or 0,
+        weaponHudPosition = validHudPosition(preferences.weaponHudPosition) and inventoryCore.copy(preferences.weaponHudPosition) or false,
+        itemBoxPosition = validHudPosition(preferences.itemBoxPosition) and inventoryCore.copy(preferences.itemBoxPosition) or false,
         soundMuted = preferences.soundMuted == true,
         soundVolume = type(preferences.soundVolume) == 'number' and preferences.soundVolume == preferences.soundVolume
             and math.max(0.0, math.min(1.0, preferences.soundVolume)) or (Config.Sounds and Config.Sounds.volume or 0.2),
@@ -192,6 +206,14 @@ local function snapshot(inventory, playerSource)
         result.layoutSettings = false
     end
     if result.isOwn then
+        result.extraInventoryItems = {}
+        if extraInventoryService then
+            for _, extra in ipairs(extraInventoryService.RootsForInventory(inventory)) do
+                for _, item in ipairs(extra.items) do
+                    result.extraInventoryItems[#result.extraInventoryItems + 1] = { name = item.name, amount = item.amount }
+                end
+            end
+        end
         result.clothing = clothingService and clothingService.View(playerSource) or nil
         result.craftingRecipes = craftingService and craftingService.Recipes() or {}
         result.playerSettings = preferences
@@ -292,12 +314,15 @@ local function commit(...)
     if clothingService then clothingService.AfterCommit(changedInventories) end
     if attachmentService then attachmentService.RefreshViews() end
     for playerSource, inventoryId in pairs(playerInventoryIds) do
-        if Config.DynamicContainerWeight and inventories[inventoryId] then
-            TriggerClientEvent('tss-inventory:ownSnapshot', playerSource, snapshot(inventories[inventoryId], playerSource))
-        end
+        local ownInventory = inventories[inventoryId]
+        local refreshOwn = Config.DynamicContainerWeight == true
         for _, inventory in ipairs(changedInventories) do
-            if not Config.DynamicContainerWeight and inventory.id == inventoryId then TriggerClientEvent('tss-inventory:ownSnapshot', playerSource, snapshot(inventory, playerSource)) end
+            if inventory.id == inventoryId or ownInventory and inventory.type == 'extra' and inventory.owner == ownInventory.owner then
+                refreshOwn = true
+                break
+            end
         end
+        if ownInventory and refreshOwn then TriggerClientEvent('tss-inventory:ownSnapshot', playerSource, snapshot(ownInventory, playerSource)) end
     end
     for playerSource, inventorySession in pairs(sessions) do
         if Config.DynamicContainerWeight then sendInventories(playerSource) else
@@ -376,12 +401,23 @@ local function openInventory(playerSource, inventoryId)
     if not inventory then return false, 'Inventory not found' end
     if inventory.type == 'drop' and not dropService.IsNearby(playerSource, inventory.id) then return false, 'Move closer to the world drop' end
     if storageService and not storageService.CanAccess(playerSource, inventory.id) then return false, 'Storage access denied' end
+    local isNewSession = sessions[playerSource] == nil
     sessions[playerSource] = sessions[playerSource] or {}
     sessions[playerSource][ownInventory.id] = true
     sessions[playerSource][inventory.id] = true
     if extraInventoryService then
         local granted, grantError = extraInventoryService.Grant(playerSource)
         if not granted then return false, grantError end
+    end
+    -- Reopen only existing item containers that the character still carries.
+    if isNewSession and getPlayerPreferences(ownInventory).rememberContainers then
+        for containerIndex, containerId in ipairs(ownInventory.settings.rememberedContainers or {}) do
+            if containerIndex > 64 then break end
+            local container = type(containerId) == 'string' and loadInventory(containerId)
+            if container and container.metadata.containerItem and storageService.CanAccess(playerSource, containerId) then
+                sessions[playerSource][containerId] = true
+            end
+        end
     end
     dropService.RefreshSession(playerSource, false)
     sendInventories(playerSource)
@@ -999,7 +1035,29 @@ local function handleAction(playerSource, request)
             end
             if request.settings.soundMuted ~= nil then preferences.soundMuted = request.settings.soundMuted end
             if soundVolume ~= nil then preferences.soundVolume = soundVolume end
-            preferences.notificationPosition = request.settings.notificationPosition
+            for _, fieldName in ipairs({ 'weaponHudPosition', 'itemBoxPosition' }) do
+                local position = request.settings[fieldName]
+                if position ~= nil then
+                    if position ~= false and not validHudPosition(position) then return false, 'Invalid display position' end
+                    preferences[fieldName] = position and { x = position.x, y = position.y } or false
+                end
+            end
+            for _, fieldName in ipairs({ 'weaponDisplay', 'itemNotifications', 'confirmDropping', 'rememberContainers' }) do
+                local settingValue = request.settings[fieldName]
+                if settingValue ~= nil then
+                    if type(settingValue) ~= 'boolean' then return false, 'Invalid display setting' end
+                    preferences[fieldName] = settingValue
+                end
+            end
+            if request.settings.notificationDuration ~= nil then
+                if not inventoryCore.integer(request.settings.notificationDuration, 1000, 10000) then return false, 'Invalid notification duration' end
+                preferences.notificationDuration = request.settings.notificationDuration
+            end
+            if request.settings.uiScale ~= nil then
+                if not ({ small = true, medium = true, large = true })[request.settings.uiScale] then return false, 'Invalid UI size' end
+                preferences.uiScale = request.settings.uiScale
+            end
+            preferences.notificationPosition = 'bottom-center'
         else
             preferences.windowLayoutVersion = preferences.windowLayoutVersion + 1
         end
@@ -1291,6 +1349,25 @@ registerPlayerEvent('tss-inventory:openWorldDrop', function(playerSource, invent
 registerPlayerEvent('tss-inventory:closeSession', function(playerSource, inventoryId)
     if not inventoryId and attachmentService then attachmentService.Close(playerSource) end
     if craftingService.Active(playerSource) then return false, 'Finish or cancel crafting first' end
+    if not inventoryId then
+        local ownInventory = ensurePlayerInventory(playerSource)
+        if ownInventory then
+            local rememberedContainers = {}
+            if getPlayerPreferences(ownInventory).rememberContainers then
+                for containerId in pairs(sessions[playerSource] or {}) do
+                    local container = loadInventory(containerId)
+                    if container and container.metadata.containerItem and storageService.CanAccess(playerSource, containerId) then
+                        rememberedContainers[#rememberedContainers + 1] = containerId
+                        if #rememberedContainers >= 64 then break end
+                    end
+                end
+            end
+            ownInventory.settings.rememberedContainers = rememberedContainers
+            -- Stop viewing before saving so the preference update cannot reopen the UI.
+            sessions[playerSource] = nil
+            commit(ownInventory)
+        end
+    end
     if inventoryId and sessions[playerSource] then sessions[playerSource][inventoryId] = nil
     else sessions[playerSource] = nil end
     storageService.RefreshTrunks()
@@ -1299,7 +1376,6 @@ end)
 
 local commandBridge = exports.tss_bridge:GetModules({ 'Commands' }, Config.TSS).Commands
 local adminCommandDefinitions = {
-    inventoryhelp = { description = 'Show inventory admin commands.', arguments = {} },
     additem = { description = 'Give an item to a player.', arguments = {
         { name = 'player', type = 'integer', help = 'Online player ID' },
         { name = 'item', help = 'Item name, such as radio' },
@@ -1364,9 +1440,6 @@ local function commandInventory(playerSource, suppliedId)
     return database.PlayerInventoryId(playerSource)
 end
 
-adminCommand('inventoryhelp', function()
-    return true, 'giveitem/additem [player ID] [item] [amount] [JSON metadata]; removeitem [inventory/self] [item ID] [amount]; createinventory [ID] [type]; openinventory [ID]; resizeinventory [ID/self] [columns] [rows]; setinventorymetadata [ID/self] [JSON]; setitemmetadata [ID/self] [item ID] [JSON]; inspectinventory [ID/self]'
-end)
 local function commandItemFeedback(playerSource, inventory, itemName, itemLabel, amount, action)
     notifyItemChange(inventory.id, itemName, action, amount, true)
     if inventory.id == database.PlayerInventoryId(playerSource) then return true, false end
@@ -1663,6 +1736,7 @@ end
 
 TSSRegisterItemExports({
     export = registerExport, player = ensurePlayerInventory, load = loadInventory,
+    extraRoots = extraInventoryService.RootsForInventory,
     metadata = cleanMetadata, mutate = mutateInventory, handlers = usableItems,
 })
 

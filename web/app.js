@@ -14802,6 +14802,7 @@
   var pendingAttachmentDrag = null;
   var lastAttachmentDragRequest = null;
   var dialogDrag = null;
+  var hudDrag = null;
   var lastDialogPosition = null;
   var layoutSavePromise = Promise.resolve();
   var layoutSaveVersion = 0;
@@ -14815,6 +14816,7 @@
     visibleMetadata: {},
     rarity: { enable: false, tiers: {} },
     weaponSystemEnabled: false,
+    equippedWeapon: null,
     clothingEnabled: false,
     clothing: null,
     clothingOpen: false,
@@ -14825,6 +14827,7 @@
     activeTabs: {},
     paymentMethods: {},
     activeShopId: null,
+    baseCellSize: 48,
     cellSize: 48,
     frontOrder: 10,
     isRequestPending: false,
@@ -14841,9 +14844,10 @@
     contextMenu: null,
     dialog: null,
     itemBoxes: [],
-    playerSettings: { notificationPosition: "middle-right" },
+    playerSettings: { notificationPosition: "bottom-center" },
     settingsOpen: false,
-    settingsDraft: { notificationPosition: "middle-right" },
+    hudPositioning: false,
+    settingsDraft: { notificationPosition: "bottom-center" },
     settingsSaving: false,
     lastTouchedInventoryId: null,
     keybindCapture: null,
@@ -15033,6 +15037,20 @@
   }
   async function requestItemAction(inventory, item, actionKind, details = {}) {
     if (inventoryState.isRequestPending || inventoryState.crafting || inventoryState.craftingPending) return;
+    if (actionKind === "drop" && inventoryState.playerSettings.confirmDropping && !details.confirmed) {
+      clearPopups();
+      inventoryState.dialog = {
+        kind: "confirmDrop",
+        inventoryId: inventory.id,
+        itemId: item.id,
+        quantity: String(details.amount ?? item.amount),
+        details,
+        position: lastDialogPosition
+      };
+      publishChanges();
+      return;
+    }
+    const { confirmed, ...actionDetails } = details;
     inventoryState.isRequestPending = true;
     if (actionKind === "craft") inventoryState.craftingPending = true;
     clearPopups();
@@ -15043,7 +15061,7 @@
         from: inventory.id,
         revision: inventory.revision,
         itemId: item?.id,
-        ...details
+        ...actionDetails
       });
       if (!response.ok) {
         playInventorySound("reject");
@@ -15302,8 +15320,8 @@
       sellItem(inventory, item, quantity, dialog.shopId);
       return;
     }
-    if (dialog.kind === "drop") {
-      requestItemAction(inventory, item, "drop", { amount: quantity });
+    if (dialog.kind === "drop" || dialog.kind === "confirmDrop") {
+      requestItemAction(inventory, item, "drop", { ...dialog.details, amount: quantity, confirmed: true });
       return;
     }
     if (dialog.kind !== "purchase") {
@@ -15733,20 +15751,56 @@
     saveLayout();
     publishChanges();
   }
-  var NOTIFICATION_POSITIONS = [
-    { value: "top-left", label: "Top left" },
-    { value: "top-center", label: "Top centre" },
-    { value: "top-right", label: "Top right" },
-    { value: "middle-left", label: "Middle left" },
-    { value: "middle-right", label: "Middle right" },
-    { value: "bottom-left", label: "Bottom left" },
-    { value: "bottom-center", label: "Bottom centre" },
-    { value: "bottom-right", label: "Bottom right" }
-  ];
-  function setNotificationPosition(position) {
-    if (!NOTIFICATION_POSITIONS.some((option) => option.value === position))
-      return;
-    inventoryState.settingsDraft.notificationPosition = position;
+  function getHudPositionStyle(position, width, height) {
+    return {
+      left: 8 + position.x * Math.max(0, innerWidth - width - 16),
+      top: 8 + position.y * Math.max(0, innerHeight - height - 16),
+      right: "auto",
+      bottom: "auto",
+      transform: "none"
+    };
+  }
+  function setHudPositioning(enabled) {
+    inventoryState.hudPositioning = enabled === true;
+    hudDrag = null;
+    publishChanges();
+  }
+  function startHudDrag(key, pointerEvent) {
+    if (!inventoryState.settingsOpen || !inventoryState.hudPositioning || inventoryState.settingsSaving || pointerEvent.button !== 0) return;
+    pointerEvent.preventDefault();
+    pointerEvent.stopPropagation();
+    const bounds = pointerEvent.currentTarget.getBoundingClientRect();
+    hudDrag = {
+      key,
+      offsetX: pointerEvent.clientX - bounds.left,
+      offsetY: pointerEvent.clientY - bounds.top,
+      width: bounds.width,
+      height: bounds.height
+    };
+    pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+  }
+  function resetHudPositions() {
+    inventoryState.settingsDraft.weaponHudPosition = false;
+    inventoryState.settingsDraft.itemBoxPosition = false;
+    inventoryState.settingsDraft.notificationPosition = "bottom-center";
+    publishChanges();
+  }
+  function getInterfaceScale() {
+    const settings = inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings;
+    return { small: 1, medium: 1.125, large: 1.25 }[settings.uiScale] || 1;
+  }
+  function applyInterfaceScale() {
+    inventoryState.cellSize = inventoryState.baseCellSize * getInterfaceScale();
+  }
+  function setInventoryPreference(key, value) {
+    if (["weaponDisplay", "itemNotifications", "confirmDropping", "rememberContainers"].includes(key) && typeof value === "boolean") {
+      inventoryState.settingsDraft[key] = value;
+    } else if (key === "notificationDuration" && Number.isInteger(value) && value >= 1e3 && value <= 1e4) {
+      inventoryState.settingsDraft[key] = value;
+    } else if (key === "uiScale" && ["small", "medium", "large"].includes(value)) {
+      inventoryState.settingsDraft.uiScale = value;
+    }
+    applyInterfaceScale();
     publishChanges();
   }
   function setSoundPreference(key, value) {
@@ -15760,6 +15814,9 @@
   async function closeInventorySettings() {
     if (inventoryState.settingsSaving) return;
     inventoryState.settingsOpen = false;
+    applyInterfaceScale();
+    inventoryState.hudPositioning = false;
+    hudDrag = null;
     publishChanges();
     await sendNuiRequest("settingsClosed", {
       inventoryOpen: inventoryState.isOpen
@@ -15776,6 +15833,7 @@
     inventoryState.settingsSaving = false;
     if (!response.ok) {
       showNotice(response.message || "Settings could not be saved");
+      publishChanges();
       return;
     }
     inventoryState.playerSettings = {
@@ -15837,6 +15895,16 @@
     await sendNuiRequest("close");
   }
   function handlePointerMove(pointerEvent) {
+    if (hudDrag) {
+      const width = Math.max(1, innerWidth - hudDrag.width - 16);
+      const height = Math.max(1, innerHeight - hudDrag.height - 16);
+      inventoryState.settingsDraft[hudDrag.key] = {
+        x: Math.max(0, Math.min(1, (pointerEvent.clientX - hudDrag.offsetX - 8) / width)),
+        y: Math.max(0, Math.min(1, (pointerEvent.clientY - hudDrag.offsetY - 8) / height))
+      };
+      publishChanges();
+      return;
+    }
     if (weaponRotationDrag) {
       weaponRotationDrag.x = pointerEvent.clientX;
       weaponRotationDrag.y = pointerEvent.clientY;
@@ -15915,6 +15983,10 @@
     publishChanges();
   }
   function handlePointerUp(pointerEvent) {
+    if (hudDrag && pointerEvent.button === 0) {
+      hudDrag = null;
+      return;
+    }
     if (weaponRotationDrag && pointerEvent.button === 0) {
       stopWeaponRotation(pointerEvent);
       return;
@@ -15979,7 +16051,7 @@
         keyboardEvent.preventDefault();
         const controls = Array.from(
           document.querySelectorAll(
-            "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled)"
+            "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled), #inventory-settings input:not(:disabled), .hud-position-toolbar button"
           )
         );
         const focusedIndex = controls.indexOf(document.activeElement);
@@ -16050,7 +16122,10 @@
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
     if (message.sounds) inventoryState.sounds = message.sounds;
-    if (message.type === "nearbyPlayers") {
+    if (message.type === "equippedWeapon") {
+      inventoryState.equippedWeapon = message.weapon || null;
+      publishChanges();
+    } else if (message.type === "nearbyPlayers") {
       inventoryState.nearbyPlayers = inventoryState.drag && canGiveFromInventory(findInventory(inventoryState.drag.inventoryId)) ? message.players || [] : [];
       if (inventoryState.drag) inventoryState.destination = calculateDestination();
       publishChanges();
@@ -16093,25 +16168,29 @@
       publishChanges();
     } else if (message.type === "openSettings") {
       inventoryState.playerSettings = {
-        notificationPosition: "middle-right",
+        notificationPosition: "bottom-center",
         ...message.settings
       };
       configureSounds(inventoryState.sounds, inventoryState.playerSettings);
       inventoryState.settingsDraft = { ...inventoryState.playerSettings };
       inventoryState.settingsOpen = true;
+      applyInterfaceScale();
+      inventoryState.hudPositioning = false;
       clearPopups();
       cancelItemDrag(false);
       publishChanges();
     } else if (message.type === "preferences") {
       inventoryState.playerSettings = {
-        notificationPosition: "middle-right",
+        notificationPosition: "bottom-center",
         ...message.settings
       };
+      applyInterfaceScale();
       publishChanges();
       configureSounds(inventoryState.sounds, inventoryState.playerSettings);
     } else if (message.type === "resetLayouts") {
       applyWindowReset();
     } else if (message.type === "itemBox") {
+      if (inventoryState.playerSettings.itemNotifications === false) return;
       if (!message.definition || !["added", "removed"].includes(message.action))
         return;
       const notificationId = ++nextItemBoxId;
@@ -16130,7 +16209,7 @@
           (notification) => notification.id !== notificationId
         );
         publishChanges();
-      }, 2500);
+      }, inventoryState.playerSettings.notificationDuration ?? 2500);
     } else if (message.type === "sync") {
       const ownInventory = message.inventories?.find(
         (inventory) => inventory.isOwn === true
@@ -16196,7 +16275,8 @@
         inventoryState.clothing = null;
         inventoryState.clothingOpen = false;
       }
-      inventoryState.cellSize = message.cellSize || 48;
+      inventoryState.baseCellSize = message.cellSize || 48;
+      applyInterfaceScale();
       inventoryState.isOpen = true;
       inventoryState.inventories.forEach(getInventoryLayout);
       if (inventoryState.dialog && !findInventory(inventoryState.dialog.inventoryId))
@@ -16215,9 +16295,12 @@
       } else clearPopups();
       publishChanges();
     } else if (message.type === "close") {
+      hudDrag = null;
+      inventoryState.hudPositioning = false;
       inventoryState.isOpen = false;
       inventoryState.clothingOpen = false;
       inventoryState.settingsOpen = false;
+      applyInterfaceScale();
       inventoryState.attachmentPanel = null;
       stopWeaponRotation();
       inventoryState.dialog = null;
@@ -16831,10 +16914,10 @@
       }
     );
   }
-  function DetailRow({ label, value }) {
+  function DetailRow({ label, value, valueColor }) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "detail", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: label }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(value) })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: valueColor ? { color: valueColor } : void 0, children: String(value) })
     ] });
   }
   function ItemTooltip() {
@@ -16890,6 +16973,7 @@
                 DetailRow,
                 {
                   label: metadataLabel,
+                  valueColor: metadataKey === "rarity" ? getItemRarityColor(item) : void 0,
                   value: typeof metadataValue === "object" ? JSON.stringify(metadataValue) : metadataValue
                 },
                 metadataKey
@@ -16971,7 +17055,8 @@
     const isPurchase = dialog.kind === "purchase";
     const isSale = dialog.kind === "sale";
     const saleOffer = isSale && getSellOffer(inventory, item, dialog.shopId);
-    const isDrop = dialog.kind === "drop";
+    const isDrop = dialog.kind === "drop" || dialog.kind === "confirmDrop";
+    const isDropConfirmation = dialog.kind === "confirmDrop";
     const quantity = Number(dialog.quantity);
     const maximum = isPurchase ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : isSale ? Math.min(1e3, item.amount) : item.amount;
     const totalPrice = Number.isInteger(quantity) && quantity > 0 ? quantity * (isSale ? saleOffer?.product.sellPrice || 0 : item.buyPrice ?? item.price ?? 0) : 0;
@@ -16991,7 +17076,13 @@
               isPurchase ? "Buy " : isSale ? "Sell " : isDrop ? "Drop " : "",
               item.definition.label
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            isDropConfirmation ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "drop-confirmation", children: [
+              "Drop ",
+              quantity,
+              " ",
+              item.definition.label,
+              " into the world?"
+            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "div",
               {
                 className: !isPurchase && !isDrop && !isSale ? "quantity-entry split-quantity" : "quantity-entry",
@@ -17154,132 +17245,210 @@
     );
   }
   function InventorySettings() {
-    const positionSelect = (0, import_react.useRef)(null);
+    const moveDisplaysButton = (0, import_react.useRef)(null);
     (0, import_react.useLayoutEffect)(() => {
-      if (inventoryState.settingsOpen) positionSelect.current?.focus();
-    }, [inventoryState.settingsOpen]);
+      if (inventoryState.settingsOpen && !inventoryState.hudPositioning) moveDisplaysButton.current?.focus();
+    }, [inventoryState.settingsOpen, inventoryState.hudPositioning]);
     if (!inventoryState.settingsOpen) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-overlay", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-      "section",
-      {
-        id: "inventory-settings",
-        role: "dialog",
-        "aria-modal": "true",
-        "aria-labelledby": "settings-title",
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "settings-title", children: "Inventory settings" }),
+    if (inventoryState.hudPositioning) return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "hud-position-toolbar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Drag the previews to position your displays." }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => setHudPositioning(false), children: "Done" })
+    ] });
+    const saving = inventoryState.settingsSaving;
+    const muted = inventoryState.settingsDraft.soundMuted === true;
+    const soundsDisabled = saving || !inventoryState.sounds.enabled;
+    const volume2 = Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-overlay", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { id: "inventory-settings", role: "dialog", "aria-modal": "true", "aria-labelledby": "settings-title", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "settings-title", children: "Inventory settings" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { "aria-label": "Close settings", disabled: saving, onClick: closeInventorySettings, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 2l8 8M10 2l-8 8" }) }) })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-content", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "display-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "display-settings-title", children: "Displays" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
+              "input",
               {
-                "aria-label": "Close settings",
-                disabled: inventoryState.settingsSaving,
-                onClick: closeInventorySettings,
-                children: "\uFFFD"
+                type: "checkbox",
+                checked: inventoryState.settingsDraft.weaponDisplay !== false,
+                disabled: saving,
+                onChange: (event) => setInventoryPreference("weaponDisplay", event.target.checked)
+              }
+            ),
+            "Weapon display"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: inventoryState.settingsDraft.itemNotifications !== false,
+                disabled: saving,
+                onChange: (event) => setInventoryPreference("itemNotifications", event.target.checked)
+              }
+            ),
+            "Item notifications"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-volume", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "notification-duration", children: [
+              "Notification duration ",
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                ((inventoryState.settingsDraft.notificationDuration ?? 2500) / 1e3).toFixed(1),
+                "s"
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                id: "notification-duration",
+                type: "range",
+                min: "1000",
+                max: "10000",
+                step: "500",
+                value: inventoryState.settingsDraft.notificationDuration ?? 2500,
+                disabled: saving || inventoryState.settingsDraft.itemNotifications === false,
+                onChange: (event) => setInventoryPreference("notificationDuration", Number(event.target.value))
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-content", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { htmlFor: "notification-position", children: "Notification position" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Place your weapon display and item notifications." }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-button-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { ref: moveDisplaysButton, disabled: saving, onClick: () => setHudPositioning(true), children: "Move displays" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: resetHudPositions, children: "Reset positions" })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "sound-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "sound-settings-title", children: "Sounds" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "sound-mute", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "select",
+              "input",
               {
-                id: "notification-position",
-                ref: positionSelect,
-                value: inventoryState.settingsDraft.notificationPosition,
-                disabled: inventoryState.settingsSaving,
-                onChange: (event) => setNotificationPosition(event.target.value),
-                children: NOTIFICATION_POSITIONS.map((position) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: position.value, children: position.label }, position.value))
+                type: "checkbox",
+                checked: muted,
+                disabled: soundsDisabled,
+                onChange: (event) => setSoundPreference("soundMuted", event.target.checked)
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "A preview appears at the selected position." }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-sounds", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "sound-mute", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "input",
-                  {
-                    type: "checkbox",
-                    checked: inventoryState.settingsDraft.soundMuted === true,
-                    disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled,
-                    onChange: (event) => setSoundPreference("soundMuted", event.target.checked)
-                  }
-                ),
-                "Mute UI sounds"
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "sound-volume", children: [
-                "Sound volume ",
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                  Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100),
-                  "%"
-                ] })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  id: "sound-volume",
-                  type: "range",
-                  min: "0",
-                  max: "100",
-                  step: "1",
-                  value: Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100),
-                  disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted,
-                  onChange: (event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  disabled: inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted,
-                  onClick: previewInventorySound,
-                  children: "Test sound"
-                }
-              )
+            "Mute UI sounds"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-volume", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "sound-volume", children: [
+              "Volume ",
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                volume2,
+                "%"
+              ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-reset", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Restore default window positions." }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  disabled: inventoryState.settingsSaving,
-                  onClick: resetInventoryLayout,
-                  children: "Reset windows"
-                }
-              )
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-actions", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  disabled: inventoryState.settingsSaving,
-                  onClick: closeInventorySettings,
-                  children: "Cancel"
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  className: "confirm",
-                  disabled: inventoryState.settingsSaving,
-                  onClick: saveInventorySettings,
-                  children: inventoryState.settingsSaving ? "Saving\uFFFD" : "Save"
-                }
-              )
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                id: "sound-volume",
+                type: "range",
+                min: "0",
+                max: "100",
+                step: "1",
+                value: volume2,
+                disabled: soundsDisabled || muted,
+                onChange: (event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: soundsDisabled || muted, onClick: previewInventorySound, children: "Test sound" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "window-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "window-settings-title", children: "Inventory" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-field", htmlFor: "ui-scale", children: [
+            "UI size",
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                id: "ui-scale",
+                value: inventoryState.settingsDraft.uiScale || "small",
+                disabled: saving,
+                onChange: (event) => setInventoryPreference("uiScale", event.target.value),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "small", children: "Small" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "medium", children: "Medium" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "large", children: "Large" })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: inventoryState.settingsDraft.confirmDropping === true,
+                disabled: saving,
+                onChange: (event) => setInventoryPreference("confirmDropping", event.target.checked)
+              }
+            ),
+            "Confirm dropping items"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: inventoryState.settingsDraft.rememberContainers === true,
+                disabled: saving,
+                onChange: (event) => setInventoryPreference("rememberContainers", event.target.checked)
+              }
+            ),
+            "Remember open carried containers"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Restore your default window layout." }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: resetInventoryLayout, children: "Reset windows" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: closeInventorySettings, children: "Cancel" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "confirm", disabled: saving, onClick: saveInventorySettings, children: saving ? "Saving..." : "Save" })
+      ] })
+    ] }) });
+  }
+  function EquippedWeaponHud() {
+    const preview = inventoryState.settingsOpen;
+    const weapon = preview ? inventoryState.equippedWeapon || { name: "weapon_pistol", label: "Pistol", image: "weapon_pistol.png", ammo: 12, clipSize: 12, showAmmo: true } : inventoryState.equippedWeapon;
+    if (!weapon) return null;
+    const settings = preview ? inventoryState.settingsDraft : inventoryState.playerSettings;
+    if (!preview && settings.weaponDisplay === false) return null;
+    const position = settings.weaponHudPosition || { x: 0.94, y: 0.91 };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "aside",
+      {
+        className: `weapon-hud${preview ? " hud-preview" : ""}`,
+        "aria-label": `Equipped ${weapon.label}`,
+        style: getHudPositionStyle(position, 172, 64),
+        onPointerDown: (pointerEvent) => startHudDrag("weaponHudPosition", pointerEvent),
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "weapon-hud-image", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item: {
+            name: weapon.name,
+            definition: { label: weapon.label, image: weapon.image, size: { x: 1, y: 1 } }
+          } }) }),
+          weapon.showAmmo && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "weapon-hud-ammo", title: "Loaded ammunition / capacity", children: [
+            weapon.ammo,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("small", { children: [
+              " / ",
+              weapon.clipSize
             ] })
-          ] })
+          ] }),
+          preview && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "hud-preview-label", children: "Weapon display" })
         ]
       }
-    ) });
+    );
   }
   function ItemBoxNotifications() {
-    const position = (inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings).notificationPosition || "middle-right";
-    const [vertical, horizontal] = position.split("-");
-    const style = {
-      top: vertical === "top" ? 24 : vertical === "middle" ? "50%" : "auto",
-      bottom: vertical === "bottom" ? 24 : "auto",
-      left: horizontal === "left" ? 24 : horizontal === "center" ? "50%" : "auto",
-      right: horizontal === "right" ? 24 : "auto",
-      transform: `translate(${horizontal === "center" ? "-50%" : "0"}, ${vertical === "middle" ? "-50%" : "0"})`
-    };
+    let style = { top: "auto", bottom: 24, left: "50%", right: "auto", transform: "translateX(-50%)" };
+    const settings = inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings;
+    if (!inventoryState.settingsOpen && settings.itemNotifications === false) return null;
+    if (settings.itemBoxPosition) style = getHudPositionStyle(
+      settings.itemBoxPosition,
+      150,
+      inventoryState.settingsOpen ? 58 : Math.max(58, inventoryState.itemBoxes.length * 58 + (inventoryState.itemBoxes.length - 1) * 8)
+    );
     const notifications = inventoryState.settingsOpen ? [
       {
         id: "preview",
@@ -17295,8 +17464,9 @@
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       "aside",
       {
-        className: "item-box-notifications",
-        "data-position": position,
+        className: `item-box-notifications${inventoryState.settingsOpen ? " hud-preview" : ""}`,
+        onPointerDown: (pointerEvent) => startHudDrag("itemBoxPosition", pointerEvent),
+        "data-position": settings.itemBoxPosition ? "custom" : "bottom-center",
         style,
         "aria-live": "polite",
         children: notifications.map((notification) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "item-box-notification", children: [
@@ -17321,8 +17491,8 @@
         "main",
         {
           id: "inventory",
-          hidden: !inventoryState.isOpen,
-          style: { "--cell": `${inventoryState.cellSize}px` },
+          hidden: !inventoryState.isOpen || inventoryState.hudPositioning,
+          style: { "--cell": `${inventoryState.cellSize}px`, "--ui-scale": getInterfaceScale() },
           children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(NearbyPlayerTargets, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWorkspace, {}),
@@ -17344,7 +17514,8 @@
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DragGhost, {}),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventorySettings, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {})
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EquippedWeaponHud, {})
         ] }),
         document.body
       )

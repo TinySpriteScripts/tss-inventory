@@ -201,7 +201,12 @@ RegisterNUICallback('action', function(request, callback)
     end)
 end)
 
-exports('HasItem', function(requirements, amount) return TSSItemExports.HasItem(ownInventory and ownInventory.items or {}, requirements, amount) end)
+local function hasItems(requirements, amount)
+    return TSSItemExports.HasItem(TSSItemExports.CheckItems(ownInventory), requirements, amount)
+end
+
+exports('HasItem', hasItems)
+exports('HasItems', hasItems)
 
 exports('GetLocalInventory', function() return copyValue(ownInventory) end)
 

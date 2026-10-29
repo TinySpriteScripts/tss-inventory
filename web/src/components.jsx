@@ -35,10 +35,14 @@ import {
   closeInventoryWindow,
   resetInventoryLayout,
   repackInventory,
-  NOTIFICATION_POSITIONS,
-  setNotificationPosition,
   setSoundPreference,
+  setInventoryPreference,
+  getInterfaceScale,
   previewInventorySound,
+  getHudPositionStyle,
+  startHudDrag,
+  resetHudPositions,
+  setHudPositioning,
   closeInventorySettings,
   saveInventorySettings,
   openWeaponAttachments,
@@ -552,11 +556,11 @@ function ClampedPopup({ popupId, position, children, style }) {
   );
 }
 
-function DetailRow({ label, value }) {
+function DetailRow({ label, value, valueColor }) {
   return (
     <div className="detail">
       <span>{label}</span>
-      <span>{String(value)}</span>
+      <span style={valueColor ? { color: valueColor } : undefined}>{String(value)}</span>
     </div>
   );
 }
@@ -608,6 +612,7 @@ function ItemTooltip() {
             <DetailRow
               key={metadataKey}
               label={metadataLabel}
+              valueColor={metadataKey === "rarity" ? getItemRarityColor(item) : undefined}
               value={
                 typeof metadataValue === "object"
                   ? JSON.stringify(metadataValue)
@@ -732,7 +737,8 @@ function QuantityDialog() {
   const isPurchase = dialog.kind === "purchase";
   const isSale = dialog.kind === "sale";
   const saleOffer = isSale && getSellOffer(inventory, item, dialog.shopId);
-  const isDrop = dialog.kind === "drop";
+  const isDrop = dialog.kind === "drop" || dialog.kind === "confirmDrop";
+  const isDropConfirmation = dialog.kind === "confirmDrop";
   const quantity = Number(dialog.quantity);
   const maximum = isPurchase
     ? item.stock === false
@@ -761,7 +767,7 @@ function QuantityDialog() {
           {isPurchase ? "Buy " : isSale ? "Sell " : isDrop ? "Drop " : ""}
           {item.definition.label}
         </h3>
-        <div
+        {isDropConfirmation ? <p className="drop-confirmation">Drop {quantity} {item.definition.label} into the world?</p> : <div
           className={
             !isPurchase && !isDrop && !isSale
               ? "quantity-entry split-quantity"
@@ -809,7 +815,7 @@ function QuantityDialog() {
               updateDialogQuantity(changeEvent.target.value)
             }
           />
-        </div>
+        </div>}
         {(isPurchase || isSale) && (
           <div className="purchase-total">Total: ${totalPrice}</div>
         )}
@@ -926,104 +932,113 @@ function DockingSlots() {
 }
 
 function InventorySettings() {
-  const positionSelect = useRef(null);
+  const moveDisplaysButton = useRef(null);
   useLayoutEffect(() => {
-    if (inventoryState.settingsOpen) positionSelect.current?.focus();
-  }, [inventoryState.settingsOpen]);
+    if (inventoryState.settingsOpen && !inventoryState.hudPositioning) moveDisplaysButton.current?.focus();
+  }, [inventoryState.settingsOpen, inventoryState.hudPositioning]);
   if (!inventoryState.settingsOpen) return null;
+  if (inventoryState.hudPositioning) return <div className="hud-position-toolbar">
+    <span>Drag the previews to position your displays.</span>
+    <button onClick={() => setHudPositioning(false)}>Done</button>
+  </div>;
+  const saving = inventoryState.settingsSaving;
+  const muted = inventoryState.settingsDraft.soundMuted === true;
+  const soundsDisabled = saving || !inventoryState.sounds.enabled;
+  const volume = Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100);
+
   return (
     <div className="settings-overlay">
-      <section
-        id="inventory-settings"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-      >
+      <section id="inventory-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header>
           <strong id="settings-title">Inventory settings</strong>
-          <button
-            aria-label="Close settings"
-            disabled={inventoryState.settingsSaving}
-            onClick={closeInventorySettings}
-          >
-            �
+          <button aria-label="Close settings" disabled={saving} onClick={closeInventorySettings}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true">
+              <path d="M2 2l8 8M10 2l-8 8" />
+            </svg>
           </button>
         </header>
         <div className="settings-content">
-          <label htmlFor="notification-position">Notification position</label>
-          <select
-            id="notification-position"
-            ref={positionSelect}
-            value={inventoryState.settingsDraft.notificationPosition}
-            disabled={inventoryState.settingsSaving}
-            onChange={(event) => setNotificationPosition(event.target.value)}
-          >
-            {NOTIFICATION_POSITIONS.map((position) => (
-              <option key={position.value} value={position.value}>
-                {position.label}
-              </option>
-            ))}
-          </select>
-          <p>A preview appears at the selected position.</p>
-          <div className="settings-sounds">
+          <section className="settings-group" aria-labelledby="display-settings-title">
+            <h4 id="display-settings-title">Displays</h4>
+            <label className="settings-toggle"><input type="checkbox" checked={inventoryState.settingsDraft.weaponDisplay !== false} disabled={saving}
+              onChange={(event) => setInventoryPreference("weaponDisplay", event.target.checked)} />Weapon display</label>
+            <label className="settings-toggle"><input type="checkbox" checked={inventoryState.settingsDraft.itemNotifications !== false} disabled={saving}
+              onChange={(event) => setInventoryPreference("itemNotifications", event.target.checked)} />Item notifications</label>
+            <div className="settings-volume">
+              <label htmlFor="notification-duration">Notification duration <span>{((inventoryState.settingsDraft.notificationDuration ?? 2500) / 1000).toFixed(1)}s</span></label>
+              <input id="notification-duration" type="range" min="1000" max="10000" step="500"
+                value={inventoryState.settingsDraft.notificationDuration ?? 2500} disabled={saving || inventoryState.settingsDraft.itemNotifications === false}
+                onChange={(event) => setInventoryPreference("notificationDuration", Number(event.target.value))} />
+            </div>
+            <p>Place your weapon display and item notifications.</p>
+            <div className="settings-button-row">
+              <button ref={moveDisplaysButton} disabled={saving} onClick={() => setHudPositioning(true)}>Move displays</button>
+              <button disabled={saving} onClick={resetHudPositions}>Reset positions</button>
+            </div>
+          </section>
+          <section className="settings-group" aria-labelledby="sound-settings-title">
+            <h4 id="sound-settings-title">Sounds</h4>
             <label className="sound-mute">
-              <input type="checkbox" checked={inventoryState.settingsDraft.soundMuted === true}
-                disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled}
+              <input type="checkbox" checked={muted} disabled={soundsDisabled}
                 onChange={(event) => setSoundPreference("soundMuted", event.target.checked)} />
               Mute UI sounds
             </label>
-            <label htmlFor="sound-volume">Sound volume <span>{Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100)}%</span></label>
-            <input id="sound-volume" type="range" min="0" max="100" step="1"
-              value={Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100)}
-              disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted}
-              onChange={(event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)} />
-            <button disabled={inventoryState.settingsSaving || !inventoryState.sounds.enabled || inventoryState.settingsDraft.soundMuted}
-              onClick={previewInventorySound}>Test sound</button>
-          </div>
-          <div className="settings-reset">
-            <span>Restore default window positions.</span>
-            <button
-              disabled={inventoryState.settingsSaving}
-              onClick={resetInventoryLayout}
-            >
-              Reset windows
-            </button>
-          </div>
-          <div className="settings-actions">
-            <button
-              disabled={inventoryState.settingsSaving}
-              onClick={closeInventorySettings}
-            >
-              Cancel
-            </button>
-            <button
-              className="confirm"
-              disabled={inventoryState.settingsSaving}
-              onClick={saveInventorySettings}
-            >
-              {inventoryState.settingsSaving ? "Saving�" : "Save"}
-            </button>
-          </div>
+            <div className="settings-volume">
+              <label htmlFor="sound-volume">Volume <span>{volume}%</span></label>
+              <input id="sound-volume" type="range" min="0" max="100" step="1" value={volume}
+                disabled={soundsDisabled || muted}
+                onChange={(event) => setSoundPreference("soundVolume", Number(event.target.value) / 100)} />
+            </div>
+            <button disabled={soundsDisabled || muted} onClick={previewInventorySound}>Test sound</button>
+          </section>
+          <section className="settings-group" aria-labelledby="window-settings-title">
+            <h4 id="window-settings-title">Inventory</h4>
+            <label className="settings-field" htmlFor="ui-scale">UI size
+              <select id="ui-scale" value={inventoryState.settingsDraft.uiScale || "small"} disabled={saving}
+                onChange={(event) => setInventoryPreference("uiScale", event.target.value)}>
+                <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option>
+              </select>
+            </label>
+            <label className="settings-toggle"><input type="checkbox" checked={inventoryState.settingsDraft.confirmDropping === true} disabled={saving}
+              onChange={(event) => setInventoryPreference("confirmDropping", event.target.checked)} />Confirm dropping items</label>
+            <label className="settings-toggle"><input type="checkbox" checked={inventoryState.settingsDraft.rememberContainers === true} disabled={saving}
+              onChange={(event) => setInventoryPreference("rememberContainers", event.target.checked)} />Remember open carried containers</label>
+            <p>Restore your default window layout.</p>
+            <button disabled={saving} onClick={resetInventoryLayout}>Reset windows</button>
+          </section>
+        </div>
+        <div className="settings-actions">
+          <button disabled={saving} onClick={closeInventorySettings}>Cancel</button>
+          <button className="confirm" disabled={saving} onClick={saveInventorySettings}>{saving ? "Saving..." : "Save"}</button>
         </div>
       </section>
     </div>
   );
 }
 
+function EquippedWeaponHud() {
+  const preview = inventoryState.settingsOpen;
+  const weapon = preview ? inventoryState.equippedWeapon || { name: "weapon_pistol", label: "Pistol", image: "weapon_pistol.png", ammo: 12, clipSize: 12, showAmmo: true }
+    : inventoryState.equippedWeapon;
+  if (!weapon) return null;
+  const settings = preview ? inventoryState.settingsDraft : inventoryState.playerSettings;
+  if (!preview && settings.weaponDisplay === false) return null;
+  const position = settings.weaponHudPosition || { x: 0.94, y: 0.91 };
+  return <aside className={`weapon-hud${preview ? " hud-preview" : ""}`} aria-label={`Equipped ${weapon.label}`}
+    style={getHudPositionStyle(position, 172, 64)} onPointerDown={(pointerEvent) => startHudDrag("weaponHudPosition", pointerEvent)}>
+    <div className="weapon-hud-image"><ItemImage item={{ name: weapon.name,
+      definition: { label: weapon.label, image: weapon.image, size: { x: 1, y: 1 } } }} /></div>
+    {weapon.showAmmo && <span className="weapon-hud-ammo" title="Loaded ammunition / capacity">{weapon.ammo}<small> / {weapon.clipSize}</small></span>}
+    {preview && <span className="hud-preview-label">Weapon display</span>}
+  </aside>;
+}
+
 function ItemBoxNotifications() {
-  const position =
-    (inventoryState.settingsOpen
-      ? inventoryState.settingsDraft
-      : inventoryState.playerSettings
-    ).notificationPosition || "middle-right";
-  const [vertical, horizontal] = position.split("-");
-  const style = {
-    top: vertical === "top" ? 24 : vertical === "middle" ? "50%" : "auto",
-    bottom: vertical === "bottom" ? 24 : "auto",
-    left: horizontal === "left" ? 24 : horizontal === "center" ? "50%" : "auto",
-    right: horizontal === "right" ? 24 : "auto",
-    transform: `translate(${horizontal === "center" ? "-50%" : "0"}, ${vertical === "middle" ? "-50%" : "0"})`,
-  };
+  let style = { top: "auto", bottom: 24, left: "50%", right: "auto", transform: "translateX(-50%)" };
+  const settings = inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings;
+  if (!inventoryState.settingsOpen && settings.itemNotifications === false) return null;
+  if (settings.itemBoxPosition) style = getHudPositionStyle(settings.itemBoxPosition, 150,
+    inventoryState.settingsOpen ? 58 : Math.max(58, inventoryState.itemBoxes.length * 58 + (inventoryState.itemBoxes.length - 1) * 8));
   const notifications = inventoryState.settingsOpen
     ? [
         {
@@ -1040,8 +1055,9 @@ function ItemBoxNotifications() {
     : inventoryState.itemBoxes;
   return (
     <aside
-      className="item-box-notifications"
-      data-position={position}
+      className={`item-box-notifications${inventoryState.settingsOpen ? " hud-preview" : ""}`}
+      onPointerDown={(pointerEvent) => startHudDrag("itemBoxPosition", pointerEvent)}
+      data-position={settings.itemBoxPosition ? "custom" : "bottom-center"}
       style={style}
       aria-live="polite"
     >
@@ -1069,8 +1085,8 @@ export function InventoryApp() {
     <>
       <main
         id="inventory"
-        hidden={!inventoryState.isOpen}
-        style={{ "--cell": `${inventoryState.cellSize}px` }}
+        hidden={!inventoryState.isOpen || inventoryState.hudPositioning}
+        style={{ "--cell": `${inventoryState.cellSize}px`, "--ui-scale": getInterfaceScale() }}
       >
         <NearbyPlayerTargets />
         <InventoryWorkspace />
@@ -1093,6 +1109,7 @@ export function InventoryApp() {
           <DragGhost />
           <InventorySettings />
           <ItemBoxNotifications />
+          <EquippedWeaponHud />
         </>,
         document.body,
       )}

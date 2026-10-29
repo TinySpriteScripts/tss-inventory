@@ -54,3 +54,10 @@ function helpers.IsLootContainerType(typeName)
     local definition = TSSContainers and TSSContainers[typeName]
     return definition ~= nil and definition.items ~= nil and not definition.coords
 end
+
+function helpers.CheckItems(inventory)
+    local items = {}
+    for _, item in ipairs(inventory and inventory.items or {}) do items[#items + 1] = item end
+    for _, item in ipairs(inventory and inventory.extraInventoryItems or {}) do items[#items + 1] = item end
+    return items
+end

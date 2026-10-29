@@ -25,6 +25,7 @@ let attachmentDragFrame = null;
 let pendingAttachmentDrag = null;
 let lastAttachmentDragRequest = null;
 let dialogDrag = null;
+let hudDrag = null;
 let lastDialogPosition = null;
 let layoutSavePromise = Promise.resolve();
 let layoutSaveVersion = 0;
@@ -39,6 +40,7 @@ export const inventoryState = {
   visibleMetadata: {},
   rarity: { enable: false, tiers: {} },
   weaponSystemEnabled: false,
+  equippedWeapon: null,
   clothingEnabled: false,
   clothing: null,
   clothingOpen: false,
@@ -49,6 +51,7 @@ export const inventoryState = {
   activeTabs: {},
   paymentMethods: {},
   activeShopId: null,
+  baseCellSize: 48,
   cellSize: 48,
   frontOrder: 10,
   isRequestPending: false,
@@ -65,9 +68,10 @@ export const inventoryState = {
   contextMenu: null,
   dialog: null,
   itemBoxes: [],
-  playerSettings: { notificationPosition: "middle-right" },
+  playerSettings: { notificationPosition: "bottom-center" },
   settingsOpen: false,
-  settingsDraft: { notificationPosition: "middle-right" },
+  hudPositioning: false,
+  settingsDraft: { notificationPosition: "bottom-center" },
   settingsSaving: false,
   lastTouchedInventoryId: null,
   keybindCapture: null,
@@ -299,6 +303,14 @@ export async function requestItemAction(
   details = {},
 ) {
   if (inventoryState.isRequestPending || inventoryState.crafting || inventoryState.craftingPending) return;
+  if (actionKind === "drop" && inventoryState.playerSettings.confirmDropping && !details.confirmed) {
+    clearPopups();
+    inventoryState.dialog = { kind: "confirmDrop", inventoryId: inventory.id, itemId: item.id,
+      quantity: String(details.amount ?? item.amount), details, position: lastDialogPosition };
+    publishChanges();
+    return;
+  }
+  const { confirmed, ...actionDetails } = details;
   inventoryState.isRequestPending = true;
   if (actionKind === "craft") inventoryState.craftingPending = true;
   clearPopups();
@@ -310,7 +322,7 @@ export async function requestItemAction(
       from: inventory.id,
       revision: inventory.revision,
       itemId: item?.id,
-      ...details,
+      ...actionDetails,
     });
     if (!response.ok) {
       playInventorySound("reject");
@@ -584,8 +596,8 @@ export function confirmQuantityDialog() {
     return;
   }
 
-  if (dialog.kind === "drop") {
-    requestItemAction(inventory, item, "drop", { amount: quantity });
+  if (dialog.kind === "drop" || dialog.kind === "confirmDrop") {
+    requestItemAction(inventory, item, "drop", { ...dialog.details, amount: quantity, confirmed: true });
     return;
   }
 
@@ -1097,21 +1109,52 @@ export function toggleMinimised(inventory) {
   publishChanges();
 }
 
-export const NOTIFICATION_POSITIONS = [
-  { value: "top-left", label: "Top left" },
-  { value: "top-center", label: "Top centre" },
-  { value: "top-right", label: "Top right" },
-  { value: "middle-left", label: "Middle left" },
-  { value: "middle-right", label: "Middle right" },
-  { value: "bottom-left", label: "Bottom left" },
-  { value: "bottom-center", label: "Bottom centre" },
-  { value: "bottom-right", label: "Bottom right" },
-];
+export function getHudPositionStyle(position, width, height) {
+  return { left: 8 + position.x * Math.max(0, innerWidth - width - 16),
+    top: 8 + position.y * Math.max(0, innerHeight - height - 16), right: "auto", bottom: "auto", transform: "none" };
+}
 
-export function setNotificationPosition(position) {
-  if (!NOTIFICATION_POSITIONS.some((option) => option.value === position))
-    return;
-  inventoryState.settingsDraft.notificationPosition = position;
+export function setHudPositioning(enabled) {
+  inventoryState.hudPositioning = enabled === true;
+  hudDrag = null;
+  publishChanges();
+}
+
+export function startHudDrag(key, pointerEvent) {
+  if (!inventoryState.settingsOpen || !inventoryState.hudPositioning || inventoryState.settingsSaving || pointerEvent.button !== 0) return;
+  pointerEvent.preventDefault();
+  pointerEvent.stopPropagation();
+  const bounds = pointerEvent.currentTarget.getBoundingClientRect();
+  hudDrag = { key, offsetX: pointerEvent.clientX - bounds.left, offsetY: pointerEvent.clientY - bounds.top,
+    width: bounds.width, height: bounds.height };
+  pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+}
+
+export function resetHudPositions() {
+  inventoryState.settingsDraft.weaponHudPosition = false;
+  inventoryState.settingsDraft.itemBoxPosition = false;
+  inventoryState.settingsDraft.notificationPosition = "bottom-center";
+  publishChanges();
+}
+
+export function getInterfaceScale() {
+  const settings = inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings;
+  return { small: 1, medium: 1.125, large: 1.25 }[settings.uiScale] || 1;
+}
+
+function applyInterfaceScale() {
+  inventoryState.cellSize = inventoryState.baseCellSize * getInterfaceScale();
+}
+
+export function setInventoryPreference(key, value) {
+  if (["weaponDisplay", "itemNotifications", "confirmDropping", "rememberContainers"].includes(key) && typeof value === "boolean") {
+    inventoryState.settingsDraft[key] = value;
+  } else if (key === "notificationDuration" && Number.isInteger(value) && value >= 1000 && value <= 10000) {
+    inventoryState.settingsDraft[key] = value;
+  } else if (key === "uiScale" && ["small", "medium", "large"].includes(value)) {
+    inventoryState.settingsDraft.uiScale = value;
+  }
+  applyInterfaceScale();
   publishChanges();
 }
 
@@ -1128,6 +1171,9 @@ export function previewInventorySound() {
 export async function closeInventorySettings() {
   if (inventoryState.settingsSaving) return;
   inventoryState.settingsOpen = false;
+  applyInterfaceScale();
+  inventoryState.hudPositioning = false;
+  hudDrag = null;
   publishChanges();
   await sendNuiRequest("settingsClosed", {
     inventoryOpen: inventoryState.isOpen,
@@ -1145,6 +1191,7 @@ export async function saveInventorySettings() {
   inventoryState.settingsSaving = false;
   if (!response.ok) {
     showNotice(response.message || "Settings could not be saved");
+    publishChanges();
     return;
   }
   inventoryState.playerSettings = {
@@ -1213,6 +1260,16 @@ export async function closeInventoryUi() {
 }
 
 function handlePointerMove(pointerEvent) {
+  if (hudDrag) {
+    const width = Math.max(1, innerWidth - hudDrag.width - 16);
+    const height = Math.max(1, innerHeight - hudDrag.height - 16);
+    inventoryState.settingsDraft[hudDrag.key] = {
+      x: Math.max(0, Math.min(1, (pointerEvent.clientX - hudDrag.offsetX - 8) / width)),
+      y: Math.max(0, Math.min(1, (pointerEvent.clientY - hudDrag.offsetY - 8) / height)),
+    };
+    publishChanges();
+    return;
+  }
   if (weaponRotationDrag) {
     weaponRotationDrag.x = pointerEvent.clientX;
     weaponRotationDrag.y = pointerEvent.clientY;
@@ -1303,6 +1360,7 @@ function handlePointerMove(pointerEvent) {
 }
 
 function handlePointerUp(pointerEvent) {
+  if (hudDrag && pointerEvent.button === 0) { hudDrag = null; return; }
   if (weaponRotationDrag && pointerEvent.button === 0) { stopWeaponRotation(pointerEvent); return; }
   if (pointerEvent.button !== 0) return;
   pressedItem = null;
@@ -1367,7 +1425,7 @@ function handleKeyDown(keyboardEvent) {
       keyboardEvent.preventDefault();
       const controls = Array.from(
         document.querySelectorAll(
-          "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled)",
+          "#inventory-settings button:not(:disabled), #inventory-settings select:not(:disabled), #inventory-settings input:not(:disabled), .hud-position-toolbar button",
         ),
       );
       const focusedIndex = controls.indexOf(document.activeElement);
@@ -1465,7 +1523,10 @@ function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
   if (message.sounds) inventoryState.sounds = message.sounds;
-  if (message.type === "nearbyPlayers") {
+  if (message.type === "equippedWeapon") {
+    inventoryState.equippedWeapon = message.weapon || null;
+    publishChanges();
+  } else if (message.type === "nearbyPlayers") {
     inventoryState.nearbyPlayers = inventoryState.drag && canGiveFromInventory(findInventory(inventoryState.drag.inventoryId))
       ? (message.players || []) : [];
     if (inventoryState.drag) inventoryState.destination = calculateDestination();
@@ -1507,25 +1568,29 @@ function handleServerMessage(messageEvent) {
     publishChanges();
   } else if (message.type === "openSettings") {
     inventoryState.playerSettings = {
-      notificationPosition: "middle-right",
+      notificationPosition: "bottom-center",
       ...message.settings,
     };
     configureSounds(inventoryState.sounds, inventoryState.playerSettings);
     inventoryState.settingsDraft = { ...inventoryState.playerSettings };
     inventoryState.settingsOpen = true;
+    applyInterfaceScale();
+    inventoryState.hudPositioning = false;
     clearPopups();
     cancelItemDrag(false);
     publishChanges();
   } else if (message.type === "preferences") {
     inventoryState.playerSettings = {
-      notificationPosition: "middle-right",
+      notificationPosition: "bottom-center",
       ...message.settings,
     };
+    applyInterfaceScale();
     publishChanges();
     configureSounds(inventoryState.sounds, inventoryState.playerSettings);
   } else if (message.type === "resetLayouts") {
     applyWindowReset();
   } else if (message.type === "itemBox") {
+    if (inventoryState.playerSettings.itemNotifications === false) return;
     if (!message.definition || !["added", "removed"].includes(message.action))
       return;
     const notificationId = ++nextItemBoxId;
@@ -1544,7 +1609,7 @@ function handleServerMessage(messageEvent) {
         (notification) => notification.id !== notificationId,
       );
       publishChanges();
-    }, 2500);
+    }, inventoryState.playerSettings.notificationDuration ?? 2500);
   } else if (message.type === "sync") {
     const ownInventory = message.inventories?.find(
       (inventory) => inventory.isOwn === true,
@@ -1624,7 +1689,8 @@ function handleServerMessage(messageEvent) {
       inventoryState.clothing = null;
       inventoryState.clothingOpen = false;
     }
-    inventoryState.cellSize = message.cellSize || 48;
+    inventoryState.baseCellSize = message.cellSize || 48;
+    applyInterfaceScale();
     inventoryState.isOpen = true;
     inventoryState.inventories.forEach(getInventoryLayout);
     if (
@@ -1646,9 +1712,12 @@ function handleServerMessage(messageEvent) {
     } else clearPopups();
     publishChanges();
   } else if (message.type === "close") {
+    hudDrag = null;
+    inventoryState.hudPositioning = false;
     inventoryState.isOpen = false;
     inventoryState.clothingOpen = false;
     inventoryState.settingsOpen = false;
+  applyInterfaceScale();
     inventoryState.attachmentPanel = null;
     stopWeaponRotation();
     inventoryState.dialog = null;

@@ -18,8 +18,12 @@ function TSSCreateWeaponService(context)
     end
 
     local function publish(playerSource, state, reloading)
+        local _, item
+        if state then _, item = carriedWeapon(playerSource, state) end
+        local definition = item and core.itemDefinition(item)
         TriggerClientEvent('tss-inventory:weapon', playerSource, state and {
             token = state.token, name = state.name, weapon = state.weapon,
+            label = definition and definition.label, image = definition and definition.image,
             ammo = state.ammo, clipSize = state.clipSize, reloading = reloading == true,
             reloadDuration = Config.WeaponReloadDuration, ammoMode = state.ammoMode,
             components = state.components, tint = state.tint,
