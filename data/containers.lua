@@ -11,7 +11,7 @@ TSSContainers = TSSContainers or {
     },
     wallet = {
         label = "Wallet",
-        size = {x=5,y=2},
+        size = {x=5,y=1},
         whitelist = {'id_card', 'cash', 'drivers_license'},
     },
 }

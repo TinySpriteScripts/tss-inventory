@@ -1,6 +1,7 @@
 Config = Config or {}
 Config.TSS = {}
 Config.EnableWeaponSystem = true -- false leaves equipping and ammo handling to other resources
+Config.EnableClothingSystem = true -- false disables clothing controls and appearance changes
 Config.WeaponReloadDuration = 1500 -- milliseconds
 Config.MoneyAsItem = true -- cash carried in player inventories, extra slots and their containers mirrors the bridge cash account
 Config.MaxDimension = 100

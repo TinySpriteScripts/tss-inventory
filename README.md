@@ -185,3 +185,38 @@ Installed parts are stored as `metadata.attachments[slot] = { name = 'attachment
 Extended magazines change the configured capacity. Removing a magazine returns any excess loaded rounds as ammunition items. If returned parts or rounds will not fit, the change is refused. Inventory changes are saved together; failed saves keep the original weapon and parts. Editing is blocked during crafting and weapon reloads.
 
 Weapon `ammoMode` values are `firearm`, `melee`, `throwable`, `rechargeable`, `fuel` and `unarmed`. Throwable weapon items are consumed when their loaded unit is used. Stun/energy weapons use native recharge behaviour. Fuel tools start with `initialAmmo` and use fuel/refill units when reloaded. New launcher/refill ammunition definitions are registered alongside the weapons. Images for the newly imported entries are left for the next asset pass.
+
+## Clothing items
+
+Set `Config.EnableClothingSystem = true` to enable clothing. Set it to `false` to leave appearance control to your other scripts. Disabled mode adds no clothing controls and does not change the player's appearance.
+
+Click the clothing button in your inventory title bar to open the equipment slots. Drag clothing onto its slot, or use the item to equip it. Double-click worn clothing, or right-click it and select **Unequip**, to return it to your inventory. Worn items and their metadata are saved with the character.
+
+Clothing item definitions are in `data/clothing.lua`. `clothingSlot` decides where an item can be worn. Item metadata chooses the gender and appearance:
+
+```lua
+metadata = {
+    label = 'Example Shirt',
+    clothing = {
+        gender = 'male', -- 'male' or 'female'
+        drawable = 0,
+        texture = 0,
+        arms = { drawable = 0, texture = 0 }, -- optional, tops only
+        undershirt = { drawable = 0, texture = 0 }, -- optional, tops only
+    },
+}
+```
+
+Use matching drawable and texture numbers from your clothing pack. Male and female variations have different numbers. The system supports male and female freemode characters. It checks available variations before applying them.
+
+Example admin command (replace `1` with the player's server ID):
+
+```text
+/giveitem 1 shirt 1 {"label":"Example Shirt","clothing":{"gender":"male","drawable":0,"texture":0,"arms":{"drawable":0,"texture":0}}}
+```
+
+Available equipment slots: `top`, `undershirt`, `pants`, `shoes`, `mask`, `bag`, `accessory`, `vest`, `decals`, `hat`, `glasses`, `ears`, `watch`, `bracelet`. Definitions assign these slots; metadata cannot change an item into a different slot. Clothing bag/vest items affect appearance only; backpacks and armour keep their existing behaviour.
+
+A top's optional `arms` and `undershirt` values help prevent clipping. A separately equipped undershirt takes priority. Unequipping restores the appearance from before the first clothing item was equipped. If there is no room to return replaced clothing, the change is refused.
+
+Do not have another appearance script continuously overwrite the same equipped components. Initial character appearance loading is supported; saving full outfits to other clothing resources is separate.

@@ -12,6 +12,8 @@ shared_scripts {
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
+    'data/clothing.lua',
+    'modules/clothing/definitions.lua',
     'modules/weapons/definitions.lua',
     'data/containers.lua',
     'data/vehicles.lua',
@@ -35,6 +37,7 @@ server_scripts {
     'modules/drops/server.lua',
     'modules/storage/server.lua',
     'modules/extras/server.lua',
+    'modules/clothing/server.lua',
     'modules/inventory/server.lua'
 }
 
@@ -45,7 +48,8 @@ client_scripts {
     'modules/storage/client.lua',
     'modules/weapons/client.lua',
     'modules/weapons/paint.lua',
-    'modules/weapons/preview.lua'
+    'modules/weapons/preview.lua',
+    'modules/clothing/client.lua'
 }
 
 ui_page 'web/index.html'

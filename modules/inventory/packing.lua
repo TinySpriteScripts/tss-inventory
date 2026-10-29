@@ -101,7 +101,8 @@ local function pack(inventory, order, bestFit, budget, definitions)
     return items
 end
 
-function core.repack(inventory)
+function core.repack(inventory, requireValidLayout)
+    if inventory.metadata and inventory.metadata.clothingEquipment then return false, 'Clothing slots have fixed positions' end
     local definitions = {}
     local occupiedCells = 0
     for _, item in ipairs(inventory.items) do
@@ -109,21 +110,22 @@ function core.repack(inventory)
         local size = definitions[item.name].size
         occupiedCells = occupiedCells + size.x * size.y
     end
-    local bestItems = inventory.items
-    local bestScore = layoutScore(bestItems, inventory.size.x, definitions)
-    if occupiedCells == bestScore[1] * inventory.size.x then return true end
+    local bestItems = not requireValidLayout and inventory.items or nil
+    local bestScore = bestItems and layoutScore(bestItems, inventory.size.x, definitions) or nil
+    if bestScore and occupiedCells == bestScore[1] * inventory.size.x then return true end
     local budget = { checks = 0 }
     for _, order in ipairs({ 'area', 'side' }) do
         for _, bestFit in ipairs({ false, true }) do
             local candidate = pack(inventory, order, bestFit, budget, definitions)
             if candidate then
                 local score = layoutScore(candidate, inventory.size.x, definitions)
-                if betterScore(score, bestScore) then bestItems, bestScore = candidate, score end
+                if not bestScore or betterScore(score, bestScore) then bestItems, bestScore = candidate, score end
             end
             if budget.checks >= maximumChecks then break end
         end
         if budget.checks >= maximumChecks then break end
     end
+    if not bestItems then return false, 'Items do not fit this inventory' end
     local placements = {}
     for _, item in ipairs(bestItems) do placements[item.id] = item end
     for _, item in ipairs(inventory.items) do

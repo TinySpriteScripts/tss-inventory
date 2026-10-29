@@ -70,7 +70,8 @@ RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, ce
     if source ~= 65535 then return end
     isOpen = true
     SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity, weaponSystemEnabled = Config.EnableWeaponSystem == true })
+    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity,
+        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true })
 end)
 
 RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
@@ -122,6 +123,7 @@ RegisterNetEvent('tss-inventory:ownSnapshot', function(inventory)
     itemKeybinds = inventory and inventory.itemKeybinds or {}
     SendNUIMessage({ type = 'itemKeybinds', bindings = itemKeybinds })
     if not inventory then
+        if TSSInventoryClient and TSSInventoryClient.Clothing then TSSInventoryClient.Clothing.Clear() end
         readyInventoryId = nil
     elseif inventory.id ~= readyInventoryId then
         readyInventoryId = inventory.id

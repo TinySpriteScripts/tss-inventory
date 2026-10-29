@@ -101,6 +101,17 @@ function inventoryCore.footprint(item)
 end
 
 function inventoryCore.fits(inventory, item, column, row, ignoredItemId)
+    if inventory.metadata and inventory.metadata.clothingEquipment then
+        local variation = TSSClothingData and TSSClothingData.Validate(item)
+        local slot = variation and TSSClothingData.Slots[variation.slot]
+        if not slot or column ~= slot.x or row ~= slot.y or item.amount ~= 1 or item.rotated == true then return false end
+        if not inventoryCore.integer(column, 1, inventory.size.x) or not inventoryCore.integer(row, 1, inventory.size.y) then return false end
+        -- Equipment holds one item per body slot, regardless of its storage footprint.
+        for _, otherItem in ipairs(inventory.items) do
+            if otherItem.id ~= ignoredItemId and otherItem.x == column and otherItem.y == row then return false end
+        end
+        return true
+    end
     local itemWidth, itemHeight = inventoryCore.footprint(item)
     if not itemWidth or not inventoryCore.integer(column, 1, inventory.size.x)
         or not inventoryCore.integer(row, 1, inventory.size.y) then return false end

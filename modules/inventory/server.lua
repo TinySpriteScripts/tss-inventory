@@ -21,6 +21,7 @@ local craftingService = nil
 local moneyService = nil
 local weaponService = nil
 local attachmentService = nil
+local clothingService = nil
 
 local inventoryTypes = {
     extra = { label = 'Extra inventory', size = { x = 1, y = 1 } },
@@ -120,20 +121,32 @@ local function loadInventory(inventoryId)
     placementCheck.items = {}
     local itemIds = {}
     local highestItemId = 0
+    local placementValid, containsClothing = true, false
     for _, item in ipairs(inventory.items) do
         local definition = inventoryCore.definition(item.name)
         if not definition or not inventoryCore.integer(item.id, 1, 1e12) or itemIds[item.id]
             or not inventoryCore.integer(item.amount, 1, definition.stackSize)
             or (item.rotated ~= nil and type(item.rotated) ~= 'boolean')
-            or not cleanMetadata(item.metadata) or not inventoryCore.fits(placementCheck, item, item.x, item.y) then
+            or not cleanMetadata(item.metadata) then
             error('Saved items do not match item definitions: ' .. inventoryId)
         end
+        if not inventoryCore.fits(placementCheck, item, item.x, item.y) then placementValid = false end
+        if definition.clothingSlot then containsClothing = true end
         itemIds[item.id] = true
         highestItemId = math.max(highestItemId, item.id)
         placementCheck.items[#placementCheck.items + 1] = item
     end
     inventory.nextItemId = math.max(inventory.nextItemId, highestItemId + 1)
     inventory.settings = inventory.settings or {}
+    if not placementValid then
+        -- Clothing used to occupy 1x1 cells. Repack existing items after the size update.
+        local repacked = containsClothing and not inventory.metadata.clothingEquipment and inventoryCore.repack
+            and inventoryCore.repack(inventory, true)
+        if not repacked then error('Saved items do not fit inventory: ' .. inventoryId) end
+        inventory.revision = inventory.revision + 1
+        local saved, saveError = database.Save({ inventory })
+        if not saved then error(saveError or 'Could not save resized clothing layout') end
+    end
     inventories[inventoryId] = inventory
     committedInventories[inventoryId] = inventoryCore.copy(inventory)
     return inventory
@@ -170,6 +183,7 @@ local function snapshot(inventory, playerSource)
         result.layoutSettings = false
     end
     if result.isOwn then
+        result.clothing = clothingService and clothingService.View(playerSource) or nil
         result.craftingRecipes = craftingService and craftingService.Recipes() or {}
         result.playerSettings = preferences
         result.itemKeybinds = inventoryCore.copy(inventory.settings.itemKeybinds or {})
@@ -185,7 +199,7 @@ local function sendInventories(playerSource)
     local snapshots = {}
     for inventoryId in pairs(inventorySession) do
         local inventory = inventories[inventoryId]
-        if inventory then snapshots[#snapshots + 1] = snapshot(inventory, playerSource) end
+        if inventory and not inventory.metadata.clothingEquipment then snapshots[#snapshots + 1] = snapshot(inventory, playerSource) end
     end
     table.sort(snapshots, function(firstInventory, secondInventory)
         if firstInventory.isOwn ~= secondInventory.isOwn then return firstInventory.isOwn end
@@ -242,6 +256,7 @@ local function commit(...)
     if dropService then dropService.AfterCommit(changedInventories) end
     if storageService then storageService.RevokeInvalid() end
     if weaponService then weaponService.RevokeInvalid() end
+    if clothingService then clothingService.AfterCommit(changedInventories) end
     if attachmentService then attachmentService.RefreshViews() end
     for playerSource, inventoryId in pairs(playerInventoryIds) do
         if Config.DynamicContainerWeight and inventories[inventoryId] then
@@ -946,6 +961,18 @@ local function handleAction(playerSource, request)
     if sourceInventory.type == 'drop' and not dropService.IsNearby(playerSource, sourceInventory.id) then return false, 'Move closer to the drop' end
     if sourceInventory.revision ~= request.revision then sendInventories(playerSource); return false, 'Inventory changed; try again' end
     if inventoryLocks[sourceInventory.id] then return false, 'Inventory is busy' end
+    if request.kind == 'openClothing' then
+        if not clothingService or sourceInventory.id ~= playerInventoryIds[playerSource] then return false, 'Clothing system is disabled' end
+        return clothingService.Load(playerSource)
+    end
+    if request.kind == 'equipClothing' then
+        if not clothingService then return false, 'Clothing system is disabled' end
+        return clothingService.Equip(playerSource, sourceInventory, request.itemId, request.slot, request.clothingRevision)
+    end
+    if request.kind == 'unequipClothing' then
+        if not clothingService or sourceInventory.id ~= playerInventoryIds[playerSource] then return false, 'Clothing access denied' end
+        return clothingService.Unequip(playerSource, request.slot, request.clothingRevision)
+    end
     if request.kind == 'openAttachments' then return attachmentService.Open(playerSource, sourceInventory, request.itemId) end
     if request.kind == 'installAttachment' then return attachmentService.Install(playerSource, sourceInventory, request) end
     if request.kind == 'craft' then return craftingService.Start(playerSource, sourceInventory, request) end
@@ -996,6 +1023,7 @@ local function handleAction(playerSource, request)
     if request.kind == 'use' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
         local definition = item and inventoryCore.definition(item.name)
+        if clothingService and definition and definition.clothingSlot then return clothingService.Use(playerSource, sourceInventory, item) end
         if weaponService and weaponService.IsWeapon(item) then
             if not storageService.CanUseFrom(playerSource, sourceInventory) then return false, 'Use items from your own inventory' end
             return weaponService.Use(playerSource, sourceInventory, item)
@@ -1018,6 +1046,7 @@ local function handleAction(playerSource, request)
     if (request.kind ~= 'move' and request.kind ~= 'quickMove') or not inventorySession[request.to] then return false, 'Invalid destination' end
     local targetInventory = loadInventory(request.to)
     if not targetInventory or targetInventory.type == 'shop' then return false, 'Invalid destination' end
+    if targetInventory.metadata.clothingEquipment then return false, 'Use the clothing slots to equip items' end
     if not storageService.CanAccess(playerSource, targetInventory.id) then return false, 'Destination is no longer accessible' end
     local movedItem = inventoryCore.find(sourceInventory, request.itemId)
     if movedItem and not storageService.CanMove(movedItem, targetInventory.id) then return false, 'A container cannot be stored inside itself' end
@@ -1109,6 +1138,7 @@ local function prepareCarriedUse(playerSource, selector)
     if not definition.container and not storageService.CanUseFrom(playerSource, sourceInventory) then
         return false, 'Use items from your own inventory'
     end
+    if clothingService and definition.clothingSlot then return clothingService.Use(playerSource, sourceInventory, item) end
     if weaponService and weaponService.IsWeapon(item) then return weaponService.Use(playerSource, sourceInventory, item) end
     if definition.container then
         local opened, openError = openInventory(playerSource, sourceInventory.id)
@@ -1410,6 +1440,13 @@ weightService = TSSCreateWeightService({
     extraRoots = extraInventoryService.RootsForInventory,
 })
 storageService = TSSCreateStorageService(inventoryContext)
+if Config.EnableClothingSystem and TSSCreateClothingService then
+    clothingService = TSSCreateClothingService({
+        extras = extraInventoryService, players = playerInventoryIds, player = ensurePlayerInventory,
+        load = loadInventory, find = findCarriedItem, locks = inventoryLocks, commit = commit, sessions = sessions,
+        canUse = storageService.CanUseFrom, busy = craftingService.Active,
+    })
+end
 dropService = TSSCreateWorldDropService(inventoryContext)
 shopService = TSSCreateShopService(inventoryContext)
 
@@ -1471,10 +1508,22 @@ if Config.EnableWeaponSystem then
     end)
 end
 
+if clothingService then
+    registerPlayerEvent('tss-inventory:clothingBaseline', clothingService.SaveBaseline)
+    registerExport('GetEquippedClothing', function(playerSource) return clothingService.View(tonumber(playerSource)) end)
+    registerExport('EquipClothing', function(playerSource, inventoryId, itemId)
+        local inventory = loadInventory(inventoryId)
+        if not inventory then return false, 'Inventory not found' end
+        return clothingService.Equip(tonumber(playerSource), inventory, itemId)
+    end)
+    registerExport('UnequipClothing', function(playerSource, slotId) return clothingService.Unequip(tonumber(playerSource), slotId) end)
+end
+
 registerExport('GetEquippedWeapon', function(playerSource) return weaponService.Get(tonumber(playerSource)) end)
 registerExport('UnequipWeapon', function(playerSource) return weaponService.Unequip(tonumber(playerSource)) end)
 
 local function unloadCharacter(playerSource)
+    if clothingService then clothingService.Clear(playerSource) end
     craftingService.Cancel(playerSource)
     attachmentService.Close(playerSource)
     if Config.EnableWeaponSystem then weaponService.Unequip(playerSource) end
@@ -1502,6 +1551,7 @@ database.Start({
     onCharacterLoaded = function(playerSource)
         runOperation(function()
             local inventory = ensurePlayerInventory(playerSource)
+            if inventory and clothingService then clothingService.Load(playerSource) end
             if inventory then TriggerClientEvent('tss-inventory:ownSnapshot', playerSource, snapshot(inventory, playerSource)) end
         end)
     end,
@@ -1517,6 +1567,15 @@ end)
 CreateThread(function()
     while true do
         Wait(1000)
-        if database.ready then runOperation(function() moneyService.Tick(); shopService.RevokeDistant(); dropService.Tick(); storageService.RevokeInvalid(); weaponService.RevokeInvalid() end) end
+        if database.ready then
+            runOperation(function()
+                moneyService.Tick()
+                shopService.RevokeDistant()
+                dropService.Tick()
+                storageService.RevokeInvalid()
+                weaponService.RevokeInvalid()
+                if clothingService then clothingService.Tick() end
+            end)
+        end
     end
 end)

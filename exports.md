@@ -284,3 +284,17 @@ Use the existing `UseItem(playerSource, selector)` export to equip or toggle a c
 | `GetWeaponAttachmentDefinitions()` | Returns the attachment item, slot, compatibility and tint definitions. |
 
 Installed parts are available through the normal item getters in `metadata.attachments`. Use `data/attachments.lua` to change compatible weapons and slot types. Attachment editing uses the built-in weapon system and requires `Config.EnableWeaponSystem = true`.
+
+## Clothing (server)
+
+Requires `Config.EnableClothingSystem = true`.
+
+```lua
+local clothing = exports['tss-inventory']:GetEquippedClothing(playerSource)
+-- clothing.inventory.items contains worn items; clothing.slots lists equipment slots.
+
+local success, errorMessage = exports['tss-inventory']:EquipClothing(playerSource, inventoryId, itemId)
+local success, errorMessage = exports['tss-inventory']:UnequipClothing(playerSource, 'top')
+```
+
+`EquipClothing` moves a carried clothing item into its matching equipment slot. Replaced clothing returns to the main inventory. `UnequipClothing` returns the worn item to the main inventory. Both refuse the change if the returned item cannot fit. These exports are registered only when the clothing system is enabled.

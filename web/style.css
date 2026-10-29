@@ -763,3 +763,64 @@ input[type="number"]::-webkit-outer-spin-button {
 .weapon-part-target.installed:hover { border-color: #ffffff50; background: #ffffff12; }
 .weapon-part-target.highlighted { border-color: #53bb76; background: #53bb7630; box-shadow: 0 0 18px #53bb7630; }
 .weapon-part-target.placement-ready { background: #53bb7655; box-shadow: 0 0 22px #53bb7650; }
+
+/* Clothing equipment shares the inventory window header and item styling. */
+.clothing-window {
+  width: min(344px, 100vw);
+  max-height: calc(100vh - 40px);
+}
+
+.clothing-slots {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.clothing-slot {
+  position: relative;
+  height: 84px;
+  min-width: 0;
+  border: 1px solid #ffffff1a;
+  background: #ffffff04;
+}
+
+.clothing-slot img, .clothing-slot .fallback {
+  position: absolute;
+  inset: 5px 5px 19px;
+  width: calc(100% - 10px);
+  height: calc(100% - 24px);
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.clothing-slot-label {
+  position: absolute;
+  bottom: 5px;
+  left: 2px;
+  right: 2px;
+  font-size: 10px;
+  color: #aaa;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.clothing-slot.valid { border-color: #61b87a; background: #61b87a20; }
+.clothing-slot.invalid { border-color: var(--red); background: #d94a5020; }
+.clothing-slot.drag-source { opacity: 0.35; }
+.clothing-loading { padding: 12px; color: #aaa; grid-column: 1 / -1; }
+
+.clothing-slot .fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  font-size: 11px;
+  overflow: hidden;
+  text-align: center;
+  overflow-wrap: anywhere;
+}

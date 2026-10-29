@@ -14721,6 +14721,9 @@
     visibleMetadata: {},
     rarity: { enable: false, tiers: {} },
     weaponSystemEnabled: false,
+    clothingEnabled: false,
+    clothing: null,
+    clothingOpen: false,
     attachmentPanel: null,
     attachmentPreview: { status: "loading", anchors: {} },
     attachmentDrag: null,
@@ -14838,7 +14841,21 @@
   function findInventory(inventoryId) {
     return inventoryState.inventories.find(
       (inventory) => inventory.id === inventoryId
-    );
+    ) || (inventoryState.clothing?.inventory?.id === inventoryId ? inventoryState.clothing.inventory : void 0);
+  }
+  function toggleClothingPanel() {
+    if (!inventoryState.clothingEnabled || inventoryState.crafting || inventoryState.craftingPending) return;
+    inventoryState.clothingOpen = !inventoryState.clothingOpen;
+    const playerInventory = inventoryState.inventories.find((inventory) => inventory.isOwn === true);
+    if (inventoryState.clothingOpen && playerInventory) void requestItemAction(playerInventory, null, "openClothing");
+    publishChanges();
+  }
+  function unequipClothing(slotId) {
+    const playerInventory = findInventory(inventoryState.clothing?.playerInventoryId);
+    if (playerInventory) void requestItemAction(playerInventory, null, "unequipClothing", {
+      slot: slotId,
+      clothingRevision: inventoryState.clothing?.inventory?.revision
+    });
   }
   function getItemFootprint(item, isRotated = item.rotated === true) {
     const itemSize = item.definition.size;
@@ -15217,18 +15234,19 @@
       return;
     }
     const itemBounds = pointerEvent.currentTarget.getBoundingClientRect();
+    const itemSize = getItemFootprint(item);
     inventoryState.pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
     pressedItem = {
       inventory,
       item,
       pointerX: pointerEvent.clientX,
       pointerY: pointerEvent.clientY,
-      offsetX: Math.floor(
+      offsetX: Math.min(itemSize.x - 1, Math.floor(
         (pointerEvent.clientX - itemBounds.left) / inventoryState.cellSize
-      ),
-      offsetY: Math.floor(
+      )),
+      offsetY: Math.min(itemSize.y - 1, Math.floor(
         (pointerEvent.clientY - itemBounds.top) / inventoryState.cellSize
-      )
+      ))
     };
   }
   function metadataMatches(leftValue, rightValue) {
@@ -15250,6 +15268,23 @@
     const drag = inventoryState.drag;
     const pointer = inventoryState.pointer;
     const pointerElement = document.elementFromPoint(pointer.x, pointer.y);
+    const clothingElement = pointerElement?.closest("[data-clothing-slot]");
+    if (clothingElement && inventoryState.clothingEnabled && inventoryState.clothing?.inventory) {
+      const item2 = getDraggedItem();
+      const slotId = clothingElement.dataset.clothingSlot;
+      const bounds = clothingElement.getBoundingClientRect();
+      const isValid = item2?.definition.clothingSlot === slotId && item2?.metadata?.clothing?.gender === inventoryState.clothing.gender;
+      return {
+        inventoryId: inventoryState.clothing.inventory.id,
+        clothingSlot: slotId,
+        isValid,
+        reason: "Clothing does not fit this slot or character",
+        screenX: bounds.left,
+        screenY: bounds.top,
+        ghostWidth: bounds.width,
+        ghostHeight: bounds.height
+      };
+    }
     if (pointerElement?.closest(".weapon-inspection") && inventoryState.attachmentPanel) {
       const panel = inventoryState.attachmentPanel;
       const draggedItem = getDraggedItem();
@@ -15422,6 +15457,13 @@
     }
     if (destination.isWeaponInspection && !destination.isValid) return;
     if (!destination.isValid) return showNotice(destination.reason);
+    if (destination.clothingSlot) {
+      void requestItemAction(sourceInventory, item, "equipClothing", {
+        slot: destination.clothingSlot,
+        clothingRevision: inventoryState.clothing?.inventory?.revision
+      });
+      return;
+    }
     if (destination.attachmentSlot) {
       const panel = destination.panel;
       void requestItemAction(sourceInventory, item, "installAttachment", {
@@ -15814,7 +15856,11 @@
   function handleServerMessage(messageEvent) {
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
-    if (message.type === "attachments") {
+    if (message.type === "clothing") {
+      inventoryState.clothing = message.state || null;
+      if (!message.state) inventoryState.clothingOpen = false;
+      publishChanges();
+    } else if (message.type === "attachments") {
       const previousPanel = inventoryState.attachmentPanel;
       inventoryState.attachmentPanel = message.panel || null;
       if (!message.panel || previousPanel?.inventoryId !== message.panel.inventoryId || previousPanel?.itemId !== message.panel.itemId) {
@@ -15938,6 +15984,12 @@
       inventoryState.visibleMetadata = message.visibleMetadata || {};
       inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
       inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
+      inventoryState.clothingEnabled = message.clothingEnabled === true;
+      inventoryState.clothing = ownInventory?.clothing || inventoryState.clothing;
+      if (!inventoryState.clothingEnabled) {
+        inventoryState.clothing = null;
+        inventoryState.clothingOpen = false;
+      }
       inventoryState.cellSize = message.cellSize || 48;
       inventoryState.isOpen = true;
       inventoryState.inventories.forEach(getInventoryLayout);
@@ -15958,6 +16010,7 @@
       publishChanges();
     } else if (message.type === "close") {
       inventoryState.isOpen = false;
+      inventoryState.clothingOpen = false;
       inventoryState.settingsOpen = false;
       inventoryState.attachmentPanel = null;
       stopWeaponRotation();
@@ -16336,6 +16389,7 @@
   }
   function WindowControls({ inventory, isDocked }) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "controls", children: [
+      inventory.isOwn === true && inventoryState.clothingEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Clothing", onClick: toggleClothingPanel, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M6 3 2 6l2 4 2-1v8h8V9l2 1 2-4-4-3c-1 3-7 3-8 0Z" }) }) }),
       inventory.type !== "shop" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Repack inventory", onClick: () => repackInventory(inventory), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 2h12" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "2", y: "4", width: "5", height: "4" }),
@@ -16424,6 +16478,87 @@
           ),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryGrid, { inventory }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryStatus, { inventory })
+        ]
+      }
+    );
+  }
+  function ClothingWindow() {
+    const [position, setPosition] = (0, import_react.useState)({ x: Math.max(12, innerWidth - 370), y: 90 });
+    const [minimised, setMinimised] = (0, import_react.useState)(false);
+    const dragOffset = (0, import_react.useRef)(null);
+    const panel = inventoryState.clothing;
+    if (!inventoryState.clothingEnabled || !inventoryState.clothingOpen) return null;
+    const equipment = panel?.inventory;
+    function startPanelDrag(pointerEvent) {
+      if (pointerEvent.button !== 0) return;
+      dragOffset.current = { x: pointerEvent.clientX - position.x, y: pointerEvent.clientY - position.y };
+      pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+    }
+    function movePanel(pointerEvent) {
+      if (!dragOffset.current) return;
+      setPosition({
+        x: Math.max(0, Math.min(innerWidth - 180, pointerEvent.clientX - dragOffset.current.x)),
+        y: Math.max(0, Math.min(innerHeight - 34, pointerEvent.clientY - dragOffset.current.y))
+      });
+    }
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "section",
+      {
+        className: `window clothing-window${minimised ? " minimised" : ""}`,
+        "aria-label": "Clothing equipment",
+        style: { left: position.x, top: position.y, zIndex: 100 },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "header",
+            {
+              className: "header",
+              onPointerDown: startPanelDrag,
+              onPointerMove: movePanel,
+              onPointerUp: () => {
+                dragOffset.current = null;
+              },
+              onLostPointerCapture: () => {
+                dragOffset.current = null;
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "title", children: "Clothing" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "controls", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: minimised ? "Restore clothing" : "Minimise clothing", onClick: () => setMinimised(!minimised), children: minimised ? "+" : "\u2212" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Close clothing", onClick: toggleClothingPanel, children: "\xD7" })
+                ] })
+              ]
+            }
+          ),
+          !minimised && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "clothing-slots", children: [
+            (panel?.slots || []).map((slot) => {
+              const item = equipment?.items.find((candidate) => candidate.x === slot.x && candidate.y === slot.y);
+              const destination = inventoryState.destination;
+              const isTarget = destination?.clothingSlot === slot.id;
+              const isDragging = item && inventoryState.drag?.inventoryId === equipment.id && inventoryState.drag?.itemId === item.id;
+              return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  className: `clothing-slot${isTarget ? destination.isValid ? " valid" : " invalid" : ""}${isDragging ? " drag-source" : ""}`,
+                  "data-clothing-slot": slot.id,
+                  "aria-label": slot.label,
+                  onPointerDown: item ? (pointerEvent) => pressInventoryItem(equipment, item, pointerEvent) : void 0,
+                  onContextMenu: item ? (pointerEvent) => openItemContextMenu(equipment, item, pointerEvent) : void 0,
+                  onDoubleClick: item ? () => unequipClothing(slot.id) : void 0,
+                  onMouseEnter: item ? (pointerEvent) => scheduleItemTooltip(item, pointerEvent) : void 0,
+                  onMouseLeave: hideItemTooltip,
+                  children: [
+                    item && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item })
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "clothing-slot-label", children: slot.label })
+                  ]
+                },
+                slot.id
+              );
+            }),
+            !equipment && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "clothing-loading", children: "Loading\u2026" })
+          ] })
         ]
       }
     );
@@ -16555,6 +16690,12 @@
     const { inventory, item } = contextMenu;
     if (contextMenu.attachmentSlot) {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClampedPopup, { popupId: "context", position: contextMenu, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => removeWeaponAttachment(contextMenu.attachmentSlot), children: "Disassemble" }) });
+    }
+    if (inventory.metadata?.clothingEquipment) {
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => unequipClothing(item.definition.clothingSlot), children: "Unequip" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
+      ] });
     }
     const binding = getItemBinding(item.name);
     const isCapturing = inventoryState.keybindCapture?.inventoryId === inventory.id && inventoryState.keybindCapture?.itemId === item.id;
@@ -16904,6 +17045,7 @@
           style: { "--cell": `${inventoryState.cellSize}px` },
           children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWorkspace, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClothingWindow, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WeaponAttachmentWindow, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DockingSlots, {}),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemTooltip, {}),

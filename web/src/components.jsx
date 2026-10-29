@@ -44,6 +44,8 @@ import {
   removeWeaponAttachment,
   startWeaponRotation,
   openInstalledAttachmentMenu,
+  toggleClothingPanel,
+  unequipClothing,
 } from "./inventoryStore.js";
 
 function ItemImage({
@@ -320,6 +322,13 @@ function WindowButton({ children, label, onClick, className }) {
 function WindowControls({ inventory, isDocked }) {
   return (
     <div className="controls">
+      {inventory.isOwn === true && inventoryState.clothingEnabled && (
+        <WindowButton label="Clothing" onClick={toggleClothingPanel}>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true">
+            <path d="M6 3 2 6l2 4 2-1v8h8V9l2 1 2-4-4-3c-1 3-7 3-8 0Z" />
+          </svg>
+        </WindowButton>
+      )}
       {inventory.type !== "shop" && <WindowButton label="Repack inventory" onClick={() => repackInventory(inventory)}>
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor">
           <path d="M2 2h12" /><rect x="2" y="4" width="5" height="4" /><rect x="9" y="4" width="5" height="4" /><rect x="2" y="10" width="12" height="4" />
@@ -417,6 +426,60 @@ function InventoryWindow({
       </div>
       <InventoryGrid inventory={inventory} />
       <InventoryStatus inventory={inventory} />
+    </section>
+  );
+}
+
+function ClothingWindow() {
+  const [position, setPosition] = useState({ x: Math.max(12, innerWidth - 370), y: 90 });
+  const [minimised, setMinimised] = useState(false);
+  const dragOffset = useRef(null);
+  const panel = inventoryState.clothing;
+  if (!inventoryState.clothingEnabled || !inventoryState.clothingOpen) return null;
+  const equipment = panel?.inventory;
+
+  function startPanelDrag(pointerEvent) {
+    if (pointerEvent.button !== 0) return;
+    dragOffset.current = { x: pointerEvent.clientX - position.x, y: pointerEvent.clientY - position.y };
+    pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+  }
+
+  function movePanel(pointerEvent) {
+    if (!dragOffset.current) return;
+    setPosition({ x: Math.max(0, Math.min(innerWidth - 180, pointerEvent.clientX - dragOffset.current.x)),
+      y: Math.max(0, Math.min(innerHeight - 34, pointerEvent.clientY - dragOffset.current.y)) });
+  }
+
+  return (
+    <section className={`window clothing-window${minimised ? " minimised" : ""}`}
+      aria-label="Clothing equipment" style={{ left: position.x, top: position.y, zIndex: 100 }}>
+      <header className="header" onPointerDown={startPanelDrag} onPointerMove={movePanel}
+        onPointerUp={() => { dragOffset.current = null; }} onLostPointerCapture={() => { dragOffset.current = null; }}>
+        <span className="title">Clothing</span>
+        <div className="controls">
+          <WindowButton label={minimised ? "Restore clothing" : "Minimise clothing"} onClick={() => setMinimised(!minimised)}>{minimised ? "+" : "−"}</WindowButton>
+          <WindowButton label="Close clothing" onClick={toggleClothingPanel}>×</WindowButton>
+        </div>
+      </header>
+      {!minimised && <div className="clothing-slots">
+        {(panel?.slots || []).map((slot) => {
+          const item = equipment?.items.find((candidate) => candidate.x === slot.x && candidate.y === slot.y);
+          const destination = inventoryState.destination;
+          const isTarget = destination?.clothingSlot === slot.id;
+          const isDragging = item && inventoryState.drag?.inventoryId === equipment.id && inventoryState.drag?.itemId === item.id;
+          return <div key={slot.id} className={`clothing-slot${isTarget ? destination.isValid ? " valid" : " invalid" : ""}${isDragging ? " drag-source" : ""}`}
+            data-clothing-slot={slot.id} aria-label={slot.label}
+            onPointerDown={item ? (pointerEvent) => pressInventoryItem(equipment, item, pointerEvent) : undefined}
+            onContextMenu={item ? (pointerEvent) => openItemContextMenu(equipment, item, pointerEvent) : undefined}
+            onDoubleClick={item ? () => unequipClothing(slot.id) : undefined}
+            onMouseEnter={item ? (pointerEvent) => scheduleItemTooltip(item, pointerEvent) : undefined}
+            onMouseLeave={hideItemTooltip}>
+            {item && <><ItemImage item={item} /><RarityFrame item={item} /></>}
+            <span className="clothing-slot-label">{slot.label}</span>
+          </div>;
+        })}
+        {!equipment && <span className="clothing-loading">Loading…</span>}
+      </div>}
     </section>
   );
 }
@@ -554,6 +617,12 @@ function ItemContextMenu() {
   if (contextMenu.attachmentSlot) {
     return <ClampedPopup popupId="context" position={contextMenu}>
       <button onClick={() => removeWeaponAttachment(contextMenu.attachmentSlot)}>Disassemble</button>
+    </ClampedPopup>;
+  }
+  if (inventory.metadata?.clothingEquipment) {
+    return <ClampedPopup popupId="context" position={contextMenu}>
+      <button onClick={() => unequipClothing(item.definition.clothingSlot)}>Unequip</button>
+      <button onClick={() => showItemDetails(item, contextMenu)}>Details</button>
     </ClampedPopup>;
   }
   const binding = getItemBinding(item.name);
@@ -958,6 +1027,7 @@ export function InventoryApp() {
         style={{ "--cell": `${inventoryState.cellSize}px` }}
       >
         <InventoryWorkspace />
+        <ClothingWindow />
         <WeaponAttachmentWindow />
         <DockingSlots />
         <ItemTooltip />
