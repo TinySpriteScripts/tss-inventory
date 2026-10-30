@@ -10,6 +10,7 @@ shared_scripts {
     'config.lua',
     'modules/inventory/items.lua',
     'modules/giving/shared.lua',
+    'modules/throwing/shared.lua',
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
@@ -43,6 +44,7 @@ server_scripts {
     'modules/giving/server.lua',
     'modules/loot/server.lua',
     'modules/stashes/server.lua',
+    'modules/throwing/server.lua',
     'modules/inventory/server.lua'
 }
 
@@ -56,7 +58,8 @@ client_scripts {
     'modules/weapons/preview.lua',
     'modules/clothing/client.lua',
     'modules/giving/client.lua',
-    'modules/stashes/client.lua'
+    'modules/stashes/client.lua',
+    'modules/throwing/client.lua'
 }
 
 ui_page 'web/index.html'

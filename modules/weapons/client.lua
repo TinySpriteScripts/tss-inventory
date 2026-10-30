@@ -134,7 +134,8 @@ CreateThread(function()
                 reportAmmo()
                 TriggerServerEvent('tss-inventory:weaponHolster', equippedWeapon.token)
                 clearWeapon()
-            elseif not IsNuiFocused() and IsDisabledControlJustPressed(0, 45) and not reloadPending then
+            elseif not IsNuiFocused() and IsDisabledControlJustPressed(0, 45) and not reloadPending
+                and not (TSSInventoryClient.Throwing and TSSInventoryClient.Throwing.IsHolding()) then
                 reportAmmo()
                 TriggerServerEvent('tss-inventory:weaponReload', equippedWeapon.token, GetAmmoInPedWeapon(playerPed, equippedWeapon.hash))
             elseif GetGameTimer() - lastReport >= 200 then

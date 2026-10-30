@@ -45,7 +45,7 @@ function TSSCreateWorldDropService(inventoryContext)
 
     function dropService.IsNearby(playerSource, inventoryId)
         local worldDrop = worldDrops[inventoryId]
-        return Config.WorldDrops.enable == true and worldDrop ~= nil
+        return Config.WorldDrops.enable == true and worldDrop ~= nil and not worldDrop.inFlight
             and isNearby(getPlayerLocation(playerSource), worldDrop) or false
     end
 
@@ -55,8 +55,9 @@ function TSSCreateWorldDropService(inventoryContext)
         local visibleDrops = {}
 
         for inventoryId, worldDrop in pairs(worldDrops) do
-            if worldDrop.bucket == routingBucket then
-                visibleDrops[#visibleDrops + 1] = { id = inventoryId, coords = inventoryCore.copy(worldDrop.coords) }
+            if worldDrop.bucket == routingBucket and not worldDrop.inFlight then
+                visibleDrops[#visibleDrops + 1] = { id = inventoryId, coords = inventoryCore.copy(worldDrop.coords),
+                    throwVisual = inventoryCore.copy(worldDrop.throwVisual) }
             end
         end
 
@@ -80,7 +81,7 @@ function TSSCreateWorldDropService(inventoryContext)
         for inventoryId in pairs(inventorySession) do
             if inventoryId:sub(1, 5) == 'drop:' then
                 local worldDrop = worldDrops[inventoryId]
-                if not worldDrop or not isNearby(playerLocation, worldDrop) then
+                if not worldDrop or worldDrop.inFlight or not isNearby(playerLocation, worldDrop) then
                     inventorySession[inventoryId] = nil
                     sessionChanged = true
                 end
@@ -89,7 +90,7 @@ function TSSCreateWorldDropService(inventoryContext)
 
         if Config.WorldDrops.enable == true and Config.WorldDrops.openWithTarget ~= true then
             for inventoryId, worldDrop in pairs(worldDrops) do
-                if isNearby(playerLocation, worldDrop) and not inventorySession[inventoryId] then
+                if not worldDrop.inFlight and isNearby(playerLocation, worldDrop) and not inventorySession[inventoryId] then
                     inventorySession[inventoryId] = true
                     sessionChanged = true
                 end
@@ -232,7 +233,7 @@ function TSSCreateWorldDropService(inventoryContext)
 
         local nearbyDrops = {}
         for inventoryId, worldDrop in pairs(worldDrops) do
-            if isNearby(playerLocation, worldDrop) and not inventoryContext.locks[inventoryId] then
+            if not worldDrop.inFlight and not worldDrop.throwVisual and isNearby(playerLocation, worldDrop) and not inventoryContext.locks[inventoryId] then
                 nearbyDrops[#nearbyDrops + 1] = worldDrop
             end
         end
@@ -270,6 +271,37 @@ function TSSCreateWorldDropService(inventoryContext)
 
         inventoryContext.commit(sourceInventory, plannedDrop)
         if isNewDrop then syncWorldDrops() end
+        return true
+    end
+
+    function dropService.BeginThrow(playerSource, sourceInventory, itemId)
+        if Config.WorldDrops.enable ~= true then return false, 'World drops are disabled' end
+        if inventoryContext.locks[sourceInventory.id] then return false, 'Inventory is busy' end
+        local sourceItem = inventoryCore.find(sourceInventory, itemId)
+        local playerLocation = getPlayerLocation(playerSource)
+        if not sourceItem or not playerLocation then return false, 'Item or player position is unavailable' end
+        local emptyDrop, creationError = makeEmptyDrop(sourceItem, playerLocation)
+        if not emptyDrop then return false, creationError end
+        local plannedSource, plannedDrop, transferError = planDropTransfer(sourceInventory, emptyDrop, itemId, 1)
+        if not plannedDrop then return false, transferError end
+        local definition = inventoryCore.itemDefinition(sourceItem)
+        sourceInventory.items, sourceInventory.nextItemId = plannedSource.items, plannedSource.nextItemId
+        inventoryContext.put(plannedDrop)
+        worldDrops[plannedDrop.id] = { inventory = plannedDrop, coords = plannedDrop.coords, bucket = plannedDrop.bucket,
+            inFlight = true, throwVisual = { weapon = definition.weapon, model = definition.throwModel or Config.WorldDrops.prop } }
+        inventoryContext.commit(sourceInventory, plannedDrop)
+        return true, plannedDrop.id, inventoryCore.copy(playerLocation.coords)
+    end
+
+    function dropService.FinishThrow(inventoryId, coordinates)
+        local worldDrop = worldDrops[inventoryId]
+        if not worldDrop or not worldDrop.inFlight then return false end
+        worldDrop.inFlight = false
+        worldDrop.coords = inventoryCore.copy(coordinates)
+        worldDrop.inventory.coords = inventoryCore.copy(coordinates)
+        inventoryContext.commit(worldDrop.inventory)
+        syncWorldDrops()
+        for _, playerId in ipairs(GetPlayers()) do dropService.RefreshSession(tonumber(playerId), true) end
         return true
     end
 
@@ -319,7 +351,9 @@ function TSSCreateWorldDropService(inventoryContext)
 
     function dropService.RestoreInventory(inventoryId, inventory)
         if inventoryId:sub(1, 5) ~= 'drop:' then return end
-        worldDrops[inventoryId] = inventory and { inventory = inventory, coords = inventory.coords, bucket = inventory.bucket } or nil
+        local previousDrop = worldDrops[inventoryId]
+        worldDrops[inventoryId] = inventory and { inventory = inventory, coords = inventory.coords, bucket = inventory.bucket,
+            inFlight = previousDrop and previousDrop.inFlight, throwVisual = previousDrop and previousDrop.throwVisual } or nil
     end
 
     function dropService.Create(options)

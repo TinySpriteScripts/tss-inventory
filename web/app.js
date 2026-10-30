@@ -14817,6 +14817,7 @@
     rarity: { enable: false, tiers: {} },
     weaponSystemEnabled: false,
     equippedWeapon: null,
+    throwPower: null,
     clothingEnabled: false,
     clothing: null,
     clothingOpen: false,
@@ -16122,7 +16123,10 @@
     const message = messageEvent.data;
     if (!message || typeof message !== "object") return;
     if (message.sounds) inventoryState.sounds = message.sounds;
-    if (message.type === "equippedWeapon") {
+    if (message.type === "throwPower") {
+      inventoryState.throwPower = message.visible === true && Number.isFinite(message.power) ? Math.max(0, Math.min(1, message.power)) : null;
+      publishChanges();
+    } else if (message.type === "equippedWeapon") {
       inventoryState.equippedWeapon = message.weapon || null;
       publishChanges();
     } else if (message.type === "nearbyPlayers") {
@@ -17004,6 +17008,7 @@
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
       inventory.type === "shop" ? item.canBuy !== false && item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
         item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
+        item.definition.throwable === true && canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "takeToHand"), children: "Take to hand" }),
         inventoryState.weaponSystemEnabled && item.definition.weapon && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openWeaponAttachments(inventory, item), children: "Attachments" }),
         (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
           "Unbind key (",
@@ -17409,6 +17414,22 @@
       ] })
     ] }) });
   }
+  function ThrowPowerMeter() {
+    const power = inventoryState.throwPower;
+    if (power === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        className: "throw-power-meter",
+        role: "progressbar",
+        "aria-label": "Throw power",
+        "aria-valuemin": 0,
+        "aria-valuemax": 100,
+        "aria-valuenow": Math.round(power * 100),
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "throw-power-fill", style: { height: `${power * 100}%` } })
+      }
+    );
+  }
   function EquippedWeaponHud() {
     const preview = inventoryState.settingsOpen;
     const weapon = preview ? inventoryState.equippedWeapon || { name: "weapon_pistol", label: "Pistol", image: "weapon_pistol.png", ammo: 12, clipSize: 12, showAmmo: true } : inventoryState.equippedWeapon;
@@ -17515,7 +17536,8 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DragGhost, {}),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventorySettings, {}),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EquippedWeaponHud, {})
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EquippedWeaponHud, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ThrowPowerMeter, {})
         ] }),
         document.body
       )

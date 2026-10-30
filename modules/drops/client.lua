@@ -10,13 +10,16 @@ local function removeDropProp(inventoryId)
 end
 
 local function createDropProp(worldDrop)
-    if not Config.WorldDrops.prop or Config.WorldDrops.prop == '' then return end
+    local visual = worldDrop.throwVisual
+    local model = visual and (type(visual.weapon) == 'string' and GetWeapontypeModel(joaat(visual.weapon)) or visual.model)
+        or Config.WorldDrops.prop
+    if not model or model == '' or model == 0 then return end
     local dropPosition = worldDrop.coords
     local inventoryId = worldDrop.id
 
     dropControllers[inventoryId] = bridge.World.CreateDistanceProp({
-        model = Config.WorldDrops.prop,
-        coords = vec3(dropPosition.x, dropPosition.y, dropPosition.z - 0.95),
+        model = model,
+        coords = vec3(dropPosition.x, dropPosition.y, dropPosition.z - (visual and 0.0 or 0.95)),
     }, {
         range = math.max(50.0, Config.WorldDrops.poolDistance or 5.0),
         despawnRange = math.max(65.0, (Config.WorldDrops.poolDistance or 5.0) + 10.0),

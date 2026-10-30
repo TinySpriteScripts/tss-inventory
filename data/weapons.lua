@@ -3,6 +3,7 @@ TSSItems = TSSItems or {}
 
 local weaponDefinitions = {
     weapon_unarmed = {
+        throwable = false, -- Fists have no physical model to hold or throw.
         metadata = { durability = 100 },
         label = 'Fists',
         description = 'Fisticuffs',

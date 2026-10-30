@@ -9,6 +9,29 @@
   color: #eee;
 }
 
+.throw-power-meter {
+  position: fixed;
+  left: 51%;
+  top: 37%;
+  width: 6px;
+  height: clamp(50px, 12vh, 115px);
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(15, 17, 19, 0.6);
+  box-shadow: 0 0 0 1px #ffffff20;
+  pointer-events: none;
+  z-index: 200000;
+}
+
+.throw-power-fill {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  background: var(--red);
+  border-radius: inherit;
+  transition: height 50ms linear;
+}
+
 * {
   box-sizing: border-box;
   -webkit-user-select: none;

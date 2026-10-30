@@ -41,6 +41,7 @@ export const inventoryState = {
   rarity: { enable: false, tiers: {} },
   weaponSystemEnabled: false,
   equippedWeapon: null,
+  throwPower: null,
   clothingEnabled: false,
   clothing: null,
   clothingOpen: false,
@@ -1523,7 +1524,11 @@ function handleServerMessage(messageEvent) {
   const message = messageEvent.data;
   if (!message || typeof message !== "object") return;
   if (message.sounds) inventoryState.sounds = message.sounds;
-  if (message.type === "equippedWeapon") {
+  if (message.type === "throwPower") {
+    inventoryState.throwPower = message.visible === true && Number.isFinite(message.power)
+      ? Math.max(0, Math.min(1, message.power)) : null;
+    publishChanges();
+  } else if (message.type === "equippedWeapon") {
     inventoryState.equippedWeapon = message.weapon || null;
     publishChanges();
   } else if (message.type === "nearbyPlayers") {

@@ -25,6 +25,7 @@ local clothingService = nil
 local givingService = nil
 local lootService = nil
 local stashService = nil
+local throwingService = nil
 
 local inventoryTypes = {
     loot = { label = 'Loot', size = { x = 8, y = 1 } },
@@ -1139,6 +1140,10 @@ local function handleAction(playerSource, request)
         commit(ownInventory)
         return true
     end
+    if request.kind == 'takeToHand' then
+        local item = inventoryCore.find(sourceInventory, request.itemId)
+        return throwingService.Begin(playerSource, sourceInventory, item)
+    end
     if request.kind == 'use' then
         local item = inventoryCore.find(sourceInventory, request.itemId)
         local definition = item and inventoryCore.definition(item.name)
@@ -1675,6 +1680,37 @@ attachmentService = TSSCreateAttachmentService({
     refreshEquipment = weaponService.Refresh,
 })
 
+throwingService = TSSCreateThrowingService({
+    find = findCarriedItem, identity = database.PlayerInventoryId, locks = inventoryLocks,
+    canUse = storageService.CanUseFrom, use = prepareCarriedUse, drops = dropService, operation = runOperation,
+    busy = craftingService.Active,
+    holster = function(playerSource)
+        if Config.EnableWeaponSystem then weaponService.Unequip(playerSource) end
+    end,
+    close = function(playerSource)
+        sessions[playerSource] = nil
+        attachmentService.Close(playerSource)
+        TriggerClientEvent('tss-inventory:close', playerSource, true)
+    end,
+})
+
+registerPlayerEvent('tss-inventory:heldReady', throwingService.Ready)
+registerPlayerEvent('tss-inventory:throwLanded', throwingService.Landed)
+
+RegisterNetEvent('tss-inventory:heldAction', function(token, action, direction)
+    local playerSource = source
+    if isRateLimited(playerSource) then return end
+    local succeeded, message, deferredCallback = runOperation(throwingService.Act, playerSource, token, action, direction)
+    if succeeded and deferredCallback then
+        local called, callbackError = pcall(deferredCallback)
+        if not called then
+            print('[tss-inventory] Held item use failed: ' .. tostring(callbackError))
+            succeeded, message = false, 'Item action failed'
+        end
+    end
+    if succeeded == false and message then notifyPlayer(playerSource, message) end
+end)
+
 registerExport('OpenWeaponAttachments', function(playerSource, inventoryId, itemId)
     playerSource = tonumber(playerSource)
     local opened, openError = openInventory(playerSource)
@@ -1721,6 +1757,7 @@ registerExport('GetEquippedWeapon', function(playerSource) return weaponService.
 registerExport('UnequipWeapon', function(playerSource) return weaponService.Unequip(tonumber(playerSource)) end)
 
 local function unloadCharacter(playerSource)
+    if throwingService then throwingService.Disconnect(playerSource) end
     if clothingService then clothingService.Clear(playerSource) end
     craftingService.Cancel(playerSource)
     attachmentService.Close(playerSource)

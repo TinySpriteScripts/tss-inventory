@@ -664,6 +664,9 @@ function ItemContextMenu() {
               Use
             </button>
           )}
+          {item.definition.throwable === true && canGiveFromInventory(inventory) && (
+            <button onClick={() => requestItemAction(inventory, item, "takeToHand")}>Take to hand</button>
+          )}
           {inventoryState.weaponSystemEnabled && item.definition.weapon && (
             <button onClick={() => openWeaponAttachments(inventory, item)}>Attachments</button>
           )}
@@ -1016,6 +1019,15 @@ function InventorySettings() {
   );
 }
 
+function ThrowPowerMeter() {
+  const power = inventoryState.throwPower;
+  if (power === null) return null;
+  return <div className="throw-power-meter" role="progressbar" aria-label="Throw power"
+    aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(power * 100)}>
+    <div className="throw-power-fill" style={{ height: `${power * 100}%` }} />
+  </div>;
+}
+
 function EquippedWeaponHud() {
   const preview = inventoryState.settingsOpen;
   const weapon = preview ? inventoryState.equippedWeapon || { name: "weapon_pistol", label: "Pistol", image: "weapon_pistol.png", ammo: 12, clipSize: 12, showAmmo: true }
@@ -1110,6 +1122,7 @@ export function InventoryApp() {
           <InventorySettings />
           <ItemBoxNotifications />
           <EquippedWeaponHud />
+          <ThrowPowerMeter />
         </>,
         document.body,
       )}

@@ -76,6 +76,8 @@ Config.ItemDefaults = {
     stackSize = 100,
     shouldClose = true, -- close an open inventory when the item is used
     useable = true, -- just shows the use item in UI. if no script attatched then do nothing
+    throwable = true, -- show Take to hand in the context menu; E uses it, R throws it. Normal Use stays immediate.
+    throwModel = 'ch_prop_ch_moneybag_01a', -- override per item; weapons automatically use their native weapon model
     metadata = {}, -- never remove this field (you can define specific metadata to items per each item)
 }
 
@@ -117,6 +119,19 @@ Config.WorldDrops = {
 
 Config.GiveDistance = 3.0 -- maximum distance in metres for nearby item transfers
 Config.MaxTransferDistance = 3.0 -- reserved for future world interactions
+
+Config.Throwing = {
+    fillTime = 500, -- milliseconds from empty to full power
+    drainTime = 500, -- milliseconds from full power back to empty
+    idleTimeout = 5000, -- milliseconds before clearing an idle hand; 0 disables
+    chargeTimeout = 6800, -- milliseconds allowed holding R; 0 disables
+    tapTime = 150, -- shorter presses drop the item near your feet
+    minPower = 0.0,
+    maxPower = 2.0, -- 1 = original throw distance; 2 = roughly twice that distance
+    speed = 13.0, -- original throw velocity at power 1
+    lift = 3.5, -- upward lift at power 1
+    maxDistance = 70.0, -- maximum allowed landing distance in metres at full power
+}
 
 Config.EnableWeaponSystem = true -- false leaves equipping and ammo handling to other resources
 Config.WeaponReloadDuration = 1500 -- milliseconds

@@ -94,6 +94,8 @@ Weapons and clothing can each be disabled in the configuration if another resour
 
 Dropping an item onto open screen space creates a world drop. Dropping it onto a nearby player's circle gives it to that player instead.
 
+Items with `throwable = true` have a **Take to hand** option in the right-click menu. While holding one, press **E** to use it normally, or hold **R** and release to throw one item towards your camera. A quick tap drops it near your feet. Around a one-second hold gives the original throw power; 1.8 seconds reaches the first peak, roughly twice the original range. Power then falls and rises repeatedly, so release near a peak for the longest throw. Tune these values in `Config.Throwing`: `fillTime` and `drainTime` control the power cycle, `idleTimeout` clears an idle hand, and `chargeTimeout` limits how long R can be held. All are milliseconds; set either timeout to `0` to disable it. After five seconds without either action, your hand clears and the item stays in your inventory. Thrown items become temporary world drops when they land. Weapons use their own GTA models; other items use `throwModel`, falling back to the world-drop prop. Normal **Use**, item keybinds and the `UseItem` export always use items immediately. Set `throwable = false` to hide **Take to hand**.
+
 ### Move your displays
 
 Open `/inventorysettings` and choose **Move displays**. Drag the weapon display and item notification previews where you want them, choose **Done**, then **Save**. **Cancel** discards your changes. **Reset positions** restores their default placement. Positions are saved per character and adapt to your screen size.

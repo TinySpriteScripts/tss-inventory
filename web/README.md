@@ -24,6 +24,17 @@ npm run build
 
 Dependencies are locked by `package-lock.json`. The checked-in bundle is already built. Node and node_modules are needed only to rebuild, not to run the resource. FiveM serves only the manifest-listed UI assets and images.
 
+## GitHub releases
+
+Push a tag beginning with `v` to build the UI and publish a release named after the tag:
+
+```text
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Commit and push the workflow and your changes before tagging. The release includes `tss-inventory.zip`, containing the resource, built UI, images and source files. Dependencies and tests are excluded. GitHub Actions must be enabled; the workflow uses the built-in GitHub token, so no extra secret is needed.
+
 ## Shop controls
 
 Cash and Bank are selectable buttons at the bottom right of each shop. Each shop keeps its own selection while the UI is running. Both drag-one purchases and quantity purchases send the selected account; the server accepts only cash or bank and does not fall back to another account.
