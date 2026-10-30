@@ -46,7 +46,7 @@ function helpers.Item(item, definition)
     result.unique = not definition.stack
     result.useable = definition.useable
     result.type = definition.category == 'weapon' and 'weapon' or 'item'
-    result.shouldClose = true
+    result.shouldClose = definition.shouldClose == true
     return result
 end
 

@@ -16316,6 +16316,19 @@
       cancelItemDrag();
     } else if (message.type === "notice") showNotice(message.message);
   }
+  function announceInventoryUiReady() {
+    let cancelled = false;
+    let retryTimeout = null;
+    const announce = async () => {
+      const response = await sendNuiRequest("uiReady");
+      if (!cancelled && !response.ok) retryTimeout = setTimeout(announce, 500);
+    };
+    void announce();
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimeout);
+    };
+  }
   function initialiseInventoryUi() {
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
@@ -17506,6 +17519,7 @@
     );
   }
   function InventoryApp() {
+    (0, import_react.useEffect)(announceInventoryUiReady, []);
     (0, import_react.useSyncExternalStore)(subscribeToInventory, getStoreVersion);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(

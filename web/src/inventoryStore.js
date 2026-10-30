@@ -1735,6 +1735,20 @@ function handleServerMessage(messageEvent) {
   } else if (message.type === "notice") showNotice(message.message);
 }
 
+export function announceInventoryUiReady() {
+  let cancelled = false;
+  let retryTimeout = null;
+  const announce = async () => {
+    const response = await sendNuiRequest("uiReady");
+    if (!cancelled && !response.ok) retryTimeout = setTimeout(announce, 500);
+  };
+  void announce();
+  return () => {
+    cancelled = true;
+    clearTimeout(retryTimeout);
+  };
+}
+
 export function initialiseInventoryUi() {
   document.addEventListener("pointermove", handlePointerMove);
   document.addEventListener("pointerup", handlePointerUp);

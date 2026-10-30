@@ -8,6 +8,32 @@ local readyInventoryId = nil
 local itemKeybinds = {}
 local pressedItemKeys = {}
 local bridge = exports.tss_bridge:GetModules({ 'Notify', 'Commands' }, Config.TSS)
+local uiReady = false
+local pendingUiMessages = {}
+local lastOpenMessage = nil
+
+local function sendUiMessage(message)
+    if uiReady then SendNUIMessage(message); return end
+    -- Keep the newest state of each type while the browser is loading.
+    if message.type ~= 'itemBox' then
+        for messageIndex = #pendingUiMessages, 1, -1 do
+            if pendingUiMessages[messageIndex].type == message.type then table.remove(pendingUiMessages, messageIndex) end
+        end
+    end
+    if #pendingUiMessages >= 64 then table.remove(pendingUiMessages, 1) end
+    pendingUiMessages[#pendingUiMessages + 1] = message
+end
+
+RegisterNUICallback('uiReady', function(_, callback)
+    local wasReady = uiReady
+    uiReady = true
+    for _, message in ipairs(pendingUiMessages) do SendNUIMessage(message) end
+    pendingUiMessages = {}
+    if wasReady and isOpen and lastOpenMessage then SendNUIMessage(lastOpenMessage) end
+    if isOpen then SetNuiFocus(true, true) end
+    callback({ ok = true })
+    TriggerServerEvent('tss-inventory:requestOwn')
+end)
 
 local function copyValue(value)
     if type(value) ~= 'table' then return value end
@@ -19,10 +45,11 @@ end
 local function closeInventory(shouldNotifyServer)
     if isCrafting and shouldNotifyServer ~= false then return false end
     isOpen = false
+    lastOpenMessage = nil
     if TSSInventoryClient and TSSInventoryClient.Giving then TSSInventoryClient.Giving.Stop() end
     if TSSInventoryClient and TSSInventoryClient.WeaponPreview then TSSInventoryClient.WeaponPreview.Close() end
     SetNuiFocus(false, false)
-    SendNUIMessage({ type = 'close' })
+    sendUiMessage({ type = 'close' })
     if shouldNotifyServer ~= false then TriggerServerEvent('tss-inventory:closeSession') end
 end
 
@@ -58,21 +85,22 @@ RegisterNetEvent('tss-inventory:crafting', function(craft)
     if source ~= 65535 then return end
     pendingCraftRequestId = nil
     isCrafting = type(craft) == 'table'
-    SendNUIMessage({ type = 'crafting', craft = craft })
+    sendUiMessage({ type = 'crafting', craft = craft })
 end)
 
 RegisterNetEvent('tss-inventory:attachments', function(panel)
     if source ~= 65535 then return end
     if TSSInventoryClient and TSSInventoryClient.WeaponPreview then TSSInventoryClient.WeaponPreview.Open(panel) end
-    SendNUIMessage({ type = 'attachments', panel = panel })
+    sendUiMessage({ type = 'attachments', panel = panel })
 end)
 
 RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, cellSize)
     if source ~= 65535 then return end
     isOpen = true
-    SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity,
-        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true, sounds = Config.Sounds })
+    lastOpenMessage = { type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity,
+        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true, sounds = Config.Sounds }
+    sendUiMessage(lastOpenMessage)
+    if uiReady then SetNuiFocus(true, true) end
 end)
 
 RegisterNetEvent('tss-inventory:close', function(onlyIfOpen)
@@ -83,7 +111,7 @@ local function showItemBox(definition, action, amount)
     if type(definition) ~= 'table' or (action ~= 'added' and action ~= 'removed') then return false end
     amount = amount or 1
     if type(amount) ~= 'number' or amount % 1 ~= 0 or amount < 1 or amount > 100000 then return false end
-    SendNUIMessage({ type = 'itemBox', definition = definition, action = action, amount = amount })
+    sendUiMessage({ type = 'itemBox', definition = definition, action = action, amount = amount })
     return true
 end
 
@@ -128,7 +156,7 @@ RegisterNetEvent('tss-inventory:ownSnapshot', function(inventory)
     if source ~= 65535 then return end
     ownInventory = inventory
     itemKeybinds = inventory and inventory.itemKeybinds or {}
-    SendNUIMessage({ type = 'itemKeybinds', bindings = itemKeybinds })
+    sendUiMessage({ type = 'itemKeybinds', bindings = itemKeybinds })
     if not inventory then
         if TSSInventoryClient and TSSInventoryClient.Clothing then TSSInventoryClient.Clothing.Clear() end
         readyInventoryId = nil
@@ -136,18 +164,19 @@ RegisterNetEvent('tss-inventory:ownSnapshot', function(inventory)
         readyInventoryId = inventory.id
         bridge.Notify.Send({ title = 'Inventory', description = 'Inventory ready', type = 'success' })
     end
-    SendNUIMessage({ type = 'preferences', settings = inventory and inventory.playerSettings or {}, sounds = Config.Sounds })
+    sendUiMessage({ type = 'preferences', settings = inventory and inventory.playerSettings or {}, sounds = Config.Sounds })
 end)
 
 RegisterNetEvent('tss-inventory:settings', function(settings)
     if source ~= 65535 then return end
     isOpen = true
-    SetNuiFocus(true, true)
-    SendNUIMessage({ type = 'openSettings', settings = settings, sounds = Config.Sounds })
+    lastOpenMessage = { type = 'openSettings', settings = settings, sounds = Config.Sounds }
+    sendUiMessage(lastOpenMessage)
+    if uiReady then SetNuiFocus(true, true) end
 end)
 
 RegisterNetEvent('tss-inventory:resetLayouts', function()
-    if source == 65535 then SendNUIMessage({ type = 'resetLayouts' }) end
+    if source == 65535 then sendUiMessage({ type = 'resetLayouts' }) end
 end)
 
 RegisterNUICallback('settingsClosed', function(request, callback)

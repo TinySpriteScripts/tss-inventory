@@ -10,6 +10,7 @@ local playerInventoryIds = {}
 local requestLimits = {}
 local inventoryLocks = {}
 local usableItems = {}
+local frameworkBridge = exports.tss_bridge:GetModules({ 'Framework' }, Config.TSS).Framework
 local activeItemUses = {}
 local operationBusy = false
 local dropService = nil
@@ -995,6 +996,20 @@ local function isRateLimited(playerSource)
     return limit.count > 25
 end
 
+local function findUsableRegistration(itemName)
+    if not itemName then return nil end
+    if usableItems[itemName] then return usableItems[itemName] end
+    local resolver = frameworkBridge and frameworkBridge.GetUsableItem
+    if type(resolver) ~= 'function' and not (type(resolver) == 'table' and rawget(resolver, '__cfx_functionReference')) then return nil end
+    local callback = resolver(itemName)
+    if not callback then return nil end
+    return {
+        handler = function(playerSource, item, inventoryId)
+            return callback(playerSource, TSSItemExports.Item(item, inventoryCore.itemDefinition(item)), inventoryId)
+        end,
+    }
+end
+
 local function usableItemCallback(playerSource, inventoryId, itemSnapshot, definition, registration)
     return function()
         local inventory = loadInventory(inventoryId)
@@ -1162,7 +1177,7 @@ local function handleAction(playerSource, request)
             return opened, openError
         end
         if not storageService.CanUseFrom(playerSource, sourceInventory) then return false, 'Use items from your own inventory' end
-        local registration = item and usableItems[item.name]
+        local registration = item and findUsableRegistration(item.name)
         if not definition or not definition.useable or not registration then return false, 'Item cannot be used' end
         local itemSnapshot = inventoryCore.itemView(item)
         return true, nil, usableItemCallback(playerSource, sourceInventory.id, itemSnapshot, definition, registration)
@@ -1276,7 +1291,7 @@ local function prepareCarriedUse(playerSource, selector)
         end
         return containerOpened, containerError
     end
-    local registration = usableItems[item.name]
+    local registration = findUsableRegistration(item.name)
     if not registration then return false, 'Item cannot be used' end
     local itemSnapshot = inventoryCore.itemView(item)
     return true, nil, usableItemCallback(playerSource, sourceInventory.id, itemSnapshot, definition, registration)

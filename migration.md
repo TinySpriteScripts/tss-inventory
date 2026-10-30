@@ -112,9 +112,7 @@ Change `exports['qb-inventory']` to `exports['tss-inventory']` for the supported
 
 ## Qbox
 
-Set `tss_framework` to `qbox`. Replace ox_inventory calls in your scripts with the matching TSS exports in exports.md.
-
-Before removing ox_inventory, check **qbx_core/server/player.lua** and Qbox's QB bridge files for remaining inventory and money calls. These instructions do not replace those core calls automatically.
+Follow **Qbox: replace Ox Inventory with TSS Inventory** at the bottom of this guide. Selecting the bridge alone does not replace Qbox's built-in Ox calls.
 
 ## ESX
 
@@ -125,3 +123,193 @@ To keep existing ESX scripts unchanged, edit the corresponding xPlayer item meth
 ## Check the setup
 
 Restart in dependency order. Test adding, removing, checking and using an item, then reconnect to confirm it saved. Keep the old inventory tables until any item-data conversion is finished.
+
+## Qbox: replace Ox Inventory with TSS Inventory
+
+These steps are for a Qbox server using TSS Inventory as its only inventory. Back up the Qbox files before editing them. Recheck these edits after updating Qbox.
+
+Remove both the original ox_inventory and any experimental resource named ox_inventory from the start list. This setup does not need an Ox compatibility resource.
+
+### 1. Set the start order
+
+Put these settings before the resources start in `server.cfg`:
+
+```cfg
+setr tss_framework qbox
+setr tss_inventory tss
+set inventory:accounts "[]"
+
+ensure oxmysql
+ensure ox_lib
+ensure qbx_core
+ensure tss_bridge
+ensure tss-inventory
+```
+
+Start scripts that register usable items after the inventory. TSS reads callbacks registered through `exports.qbx_core:CreateUseableItem` automatically. Their items must exist in TSS and have `useable = true`.
+
+`inventory:accounts "[]"` stops Qbox from updating cash through Ox. Keep `Config.MoneyAsItem` enabled if you want TSS cash items. TSS handles their balance updates; do not add a second cash-sync script.
+
+### 2. Allow TSS at Qbox startup
+
+Open `qbx_core/server/main.lua`.
+
+Find the Ox Inventory version check and change its condition to:
+
+```lua
+elseif GetConvar('tss_inventory', 'auto') ~= 'tss' and not lib.checkDependency('ox_inventory', '2.42.1', true) then
+```
+
+Keep the minimum Ox version from your existing file if it differs.
+
+Find the `inventory:framework` check and change its condition to:
+
+```lua
+elseif GetConvar('tss_inventory', 'auto') ~= 'tss' and GetConvar('inventory:framework', '') ~= 'qbx' then
+```
+
+Leave the error messages, ox_lib check and OneSync check in place.
+
+If your Qbox version also lists `ox_inventory` in the `dependencies` section of `fxmanifest.lua`, remove that entry. Keep its other dependencies.
+
+### 3. Load TSS item definitions
+
+Open `qbx_core/bridge/qb/server/main.lua` and remove these two lines:
+
+```lua
+local convertItems = require 'bridge.qb.shared.compat'.convertItems
+convertItems(require '@ox_inventory.data.items', require 'shared.items')
+```
+
+Open `qbx_core/bridge/qb/shared/main.lua`.
+
+Keep the first line, `local qbShared = require 'shared.main'`. Replace the item section after it, from `qbShared.Items = {}` through the Ox item, weapon, component and ammunition loops, with:
+
+```lua
+qbShared.Items = require '@tss-inventory.modules.compat.qbox.items'
+```
+
+Keep everything from `local starterItems = require 'config.shared'.starterItems` onwards.
+
+The supplied TSS file reads definitions before the inventory starts. It does not load the database or change Qbox's global item tables itself. Add custom items to TSS's data files, then restart the server.
+
+### 4. Replace Qbox player item methods
+
+Open `qbx_core/server/player.lua`. Replace the following `self.Functions` methods inside `CreatePlayer`. Keep the other player methods.
+
+```lua
+function self.Functions.AddItem(itemName, amount, slot, metadata)
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:AddItem(self.PlayerData.source, itemName, amount or 1, slot, metadata)
+end
+
+function self.Functions.RemoveItem(itemName, amount, slot)
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:RemoveItem(self.PlayerData.source, itemName, amount or 1, slot)
+end
+
+function self.Functions.GetItemBySlot(slot)
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:GetItemBySlot(self.PlayerData.source, slot)
+end
+
+function self.Functions.GetItemByName(itemName)
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:GetItemByName(self.PlayerData.source, itemName)
+end
+
+function self.Functions.GetItemsByName(itemName)
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:GetItemsByName(self.PlayerData.source, itemName)
+end
+
+function self.Functions.ClearInventory()
+    assert(not self.Offline, 'unsupported for offline players')
+    return exports['tss-inventory']:ClearInventory(self.PlayerData.source)
+end
+```
+
+Do not wrap the returned items in `qbItemCompat` or convert `cash` to `money`. TSS already provides `slot`, `info` and `amount`. Its cash item is named `cash`.
+
+### 5. Replace item checks and item use
+
+In `qbx_core/bridge/qb/server/functions.lua`, replace `functions.HasItem` and `functions.UseItem`:
+
+```lua
+function functions.HasItem(playerSource, items, amount)
+    return exports['tss-inventory']:HasItem(playerSource, items, amount)
+end
+
+function functions.UseItem(playerSource, item)
+    return exports['tss-inventory']:UseItem(playerSource, item)
+end
+```
+
+In `qbx_core/bridge/qb/client/functions.lua`, replace `functions.HasItem`:
+
+```lua
+function functions.HasItem(items, amount)
+    return exports['tss-inventory']:HasItem(items, amount)
+end
+```
+
+In `qbx_core/modules/utils.lua`, replace both `HasItem` functions. Use this in the server section:
+
+```lua
+function HasItem(playerSource, items, amount)
+    return exports['tss-inventory']:HasItem(playerSource, items, amount)
+end
+```
+
+Use this in the client section:
+
+```lua
+function HasItem(items, amount)
+    return exports['tss-inventory']:HasItem(items, amount)
+end
+```
+
+### 6. Give starter items through TSS
+
+Open `qbx_core/server/character.lua`. Replace `giveStarterItems` with:
+
+```lua
+local function giveStarterItems(playerSource)
+    local deadline = GetGameTimer() + 30000
+
+    while GetPlayerName(playerSource) and GetGameTimer() < deadline do
+        if GetResourceState('tss-inventory') == 'started' then
+            local playerInventory = exports['tss-inventory']:GetPlayerInventory(playerSource)
+            if playerInventory then
+                for _, item in ipairs(starterItems) do
+                    local metadata = type(item.metadata) == 'function' and item.metadata(playerSource) or item.metadata
+                    local added, itemError = exports['tss-inventory']:AddItem(playerSource, item.name, item.amount or 1, false, metadata)
+                    if not added then
+                        lib.print.error(('Starter item %s could not be added: %s'):format(item.name, tostring(itemError)))
+                    end
+                end
+                return
+            end
+        end
+        Wait(100)
+    end
+
+    lib.print.error('Starter items could not be given because TSS Inventory was not ready.')
+end
+```
+
+Make sure every starter item is defined in TSS. Use `cash` rather than `money` for its cash item. Existing Qbox starter metadata functions can be kept.
+
+### 7. Test the server
+
+Restart the whole server after these changes. Test:
+
+- Creating a new character and receiving starter items.
+- Reconnecting with existing items.
+- Adding, removing, checking and using an item registered through Qbox.
+- Cash changes, cash purchases and bank purchases.
+- Opening inventory after restarting TSS Inventory and TSS Bridge.
+
+Qbox's old `PlayerData.items` field is not the inventory's saved data. Scripts reading it directly should use TSS's getter exports instead.
+
+Other scripts calling Ox Inventory directly still need their supported calls changed to TSS. These instructions do not add Ox hooks, restricted stash registration or every Ox export. See the export guide for the available calls.

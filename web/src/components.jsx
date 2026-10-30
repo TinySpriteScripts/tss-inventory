@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { DOCK_SLOT_IDS, getDockSlots } from "./docking.js";
 import {
   inventoryState,
+  announceInventoryUiReady,
   subscribeToInventory,
   getStoreVersion,
   findInventory,
@@ -1091,6 +1092,7 @@ function ItemBoxNotifications() {
 }
 
 export function InventoryApp() {
+  useEffect(announceInventoryUiReady, []);
   useSyncExternalStore(subscribeToInventory, getStoreVersion);
 
   return (
