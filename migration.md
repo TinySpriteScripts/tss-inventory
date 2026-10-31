@@ -313,3 +313,7 @@ Restart the whole server after these changes. Test:
 Qbox's old `PlayerData.items` field is not the inventory's saved data. Scripts reading it directly should use TSS's getter exports instead.
 
 Other scripts calling Ox Inventory directly still need their supported calls changed to TSS. These instructions do not add Ox hooks, restricted stash registration or every Ox export. See the export guide for the available calls.
+
+### Scope of these Qbox changes
+
+These steps change Qbox core and its built-in QB bridge only. Keep your other resources unchanged. Jobs and utilities that call Ox Inventory directly can be migrated separately later; the core setup does not convert them automatically.
