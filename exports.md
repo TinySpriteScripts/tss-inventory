@@ -38,7 +38,7 @@ These exports run on the server.
 | `CreateInventory(inventoryId, typeName, options?)` | Create an inventory from a type. |
 | `CreateInventory(inventoryId, data)` | Create a stash using `label`, `size` or `slots`, and `maxweight`. |
 | `CreateContainer(typeName, options?)` | Create a container. Set `options.inventoryId` to choose its ID. |
-| `OpenStash(playerSource, stashName)` | Open a fixed stash from `data/containers.lua`. Checks distance and character ownership. |
+| `OpenStash(playerSource, stashName)` | Open a fixed stash from `data/containers.lua`. Checks distance, character ownership and configured groups. |
 | `OpenInventory(playerSource, inventoryId?, data?)` | Open the inventory alongside the player's inventory. Omit the ID to open their own. Supply data to create a missing stash. |
 | `CloseInventory(playerSource, inventoryId?)` | Close one window, or omit the ID to close everything. |
 | `DeleteContainer(inventoryId)` | Delete a container. Player inventories, shops, drops and extra slots are excluded. |
@@ -84,6 +84,7 @@ business_storage = {
 - `target = true`: add an interaction through the bridge. Set `false` to disable it.
 - `openWhenNearby = true`: include the stash when the player opens their inventory nearby with TAB. Set `false` for target/export-only access.
 - Distance-based stashes (`target = false`, `openWhenNearby = true`) can draw a marker using `Config.FixedStash`. Target stashes never draw a marker.
+- `groups = { mechanic = 0 }`: allow any listed job or gang at the specified minimum grade. Omit for public access.
 - `distance`: maximum distance from the coordinates. Defaults to `2.0` metres. The server also removes access when the player moves away.
 - Optional `bucket` restricts access to one routing bucket. Omit it for access in any bucket.
 - `whitelist`, `blacklist` and `maxWeight` use the normal inventory rules.
@@ -284,7 +285,7 @@ An item ID identifies a stack. Split it first to rename just one unit. Different
 
 Define the item in data/items.lua before registering it. Set `useable=false` to disable use. Callbacks do not remove items automatically.
 
-On Qbox, item use also finds callbacks registered through `qbx_core:CreateUseableItem`. TSS registrations take priority, and TSS's item-use and ownership checks still apply. `GetUsableItem` returns TSS's own registrations. Follow the Qbox section at the bottom of migration.md to replace Qbox's remaining Ox Inventory calls.
+On Qbox, item use also finds callbacks registered through `qbx_core:CreateUseableItem`. TSS registrations take priority, and TSS's item-use and ownership checks still apply. `GetUsableItem` returns TSS's own registrations. Follow the [Qbox migration guide](migration/qbox.md) to replace Qbox's remaining Ox Inventory calls.
 
 With `Config.UseItemsFromContainers = true`, usable items may come from carried containers. Use the callback's `inventoryId` when removing the item, especially after a timer or client event. Matching player-ID/slot removals made directly inside the callback also use the selected container stack.
 
@@ -313,12 +314,14 @@ Start the registering script after tss-inventory. Restart it after restarting th
 | Export | Action |
 | --- | --- |
 | `RegisterShop(shopId, definition)` | Register a shop using the format in data/shops.lua. |
-| `CreateShop(data)` | Register one shop from `{name,label,coords,items,size?,distance?,account?}`. |
+| `CreateShop(data)` | Register one shop from `{name,label,coords,items,size?,distance?,account?,groups?}`. |
 | `OpenShop(playerSource, shopId)` | Open the shop alongside the player's inventory. |
 
 CreateShop products accept `name`, `buyPrice` (or legacy `price`), `sellPrice`, `buy`, `sell`, `amount` or `count`, and `info` or `metadata`. Shop-level `buy` and `sell` toggles are also supported. Coordinates are required. Each product name must be unique. Use `size={x=8}`; height is calculated automatically with a minimum of two rows. Use false for unlimited stock.
 
 #### Buying and selling
+
+Set `groups = { ambulance = 0 }` to restrict a shop by job or gang and minimum grade. The server checks access when opening and trading and closes the shop if access is lost.
 
 Directions are from the player's perspective: `buy` allows players to buy from the shop; `sell` allows players to sell to it.
 

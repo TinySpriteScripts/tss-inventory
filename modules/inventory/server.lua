@@ -402,6 +402,9 @@ local function openInventory(playerSource, inventoryId)
     local inventory = loadInventory(inventoryId or ownInventory.id)
     if not inventory then return false, 'Inventory not found' end
     if inventory.type == 'drop' and not dropService.IsNearby(playerSource, inventory.id) then return false, 'Move closer to the world drop' end
+    if inventory.type == 'shop' and not (shopService and shopService.CanAccess(playerSource, inventory.id:sub(6))) then
+        return false, 'Shop access denied'
+    end
     if storageService and not storageService.CanAccess(playerSource, inventory.id) then return false, 'Storage access denied' end
     local isNewSession = sessions[playerSource] == nil
     sessions[playerSource] = sessions[playerSource] or {}

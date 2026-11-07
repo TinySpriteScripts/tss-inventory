@@ -148,4 +148,11 @@ Admins can also remove items, open and resize inventories, and edit item or inve
 The inventory includes exports for adding and removing items, opening storage, creating shops and loot, registering usable items, and changing inventories. Common qb-inventory-style calls are supported to make switching easier.
 
 - [Export guide](exports.md): available functions and copyable examples.
-- [Migration guide](migration.md): changes to make when connecting existing framework scripts.
+- [QBCore migration](migration/qbcore.md)
+- [Qbox migration](migration/qbox.md), including the reported jobs and utilities.
+
+### ESX migration
+
+Set `tss_framework` to `esx`. Replace your scripts' xPlayer item checks, additions and removals with TSS HasItem, AddItem and RemoveItem calls using the player server ID. Register effects with CreateUsableItem.
+
+To keep existing ESX scripts unchanged, edit the corresponding xPlayer item methods to call TSS. Leave `Config.CustomInventory` at its documented default unless your ESX integration requires another setting. Selecting the bridge does not redirect ESX's item methods or saved inventory.

@@ -1,7 +1,7 @@
 -- Shop catalogues are read-only. Trades use server prices and validated carried items.
 function TSSCreateShopService(inventoryContext)
     local inventoryCore = TSSCore
-    local bridge = exports.tss_bridge:GetModules({ 'Banking', 'Framework' })
+    local bridge = exports.tss_bridge:GetModules({ 'Banking', 'Framework', 'Player' })
     local registeredShops = {}
     local shopService = {}
 
@@ -26,6 +26,16 @@ function TSSCreateShopService(inventoryContext)
             + (playerPosition.z - shopPosition.z) ^ 2
 
         return distanceSquared <= shop.distance ^ 2
+    end
+
+    local function canAccess(playerSource, shop)
+        return isPlayerNearby(playerSource, shop)
+            and (shop.groups == nil or bridge.Player.HasGroup(playerSource, shop.groups))
+    end
+
+    function shopService.CanAccess(playerSource, shopId)
+        local shop = registeredShops[shopId]
+        return shop ~= nil and canAccess(playerSource, shop)
     end
 
     function shopService.Register(shopId, shopDefinition)
@@ -61,8 +71,8 @@ function TSSCreateShopService(inventoryContext)
             return false, 'Invalid shop distance'
         end
 
-        if shopDefinition.groups then
-            return false, 'Shop groups are not supported; configure access in the calling server resource'
+        if shopDefinition.groups ~= nil and not inventoryCore.validGroups(shopDefinition.groups) then
+            return false, 'Invalid shop groups'
         end
 
         if shopDefinition.account and shopDefinition.account ~= 'cash' and shopDefinition.account ~= 'bank' then
@@ -184,6 +194,7 @@ function TSSCreateShopService(inventoryContext)
             coords = { x = coordinates.x, y = coordinates.y, z = coordinates.z },
             distance = interactionDistance,
             bucket = shopDefinition.bucket or 0,
+            groups = inventoryCore.copy(shopDefinition.groups),
             account = shopInventory.account,
         }
 
@@ -198,8 +209,8 @@ function TSSCreateShopService(inventoryContext)
 
     function shopService.Open(playerSource, shopId)
         local shop = registeredShops[shopId]
-        if not shop or not isPlayerNearby(playerSource, shop) then
-            return false, 'Move closer to the shop'
+        if not shop or not canAccess(playerSource, shop) then
+            return false, 'Shop access denied'
         end
 
         return inventoryContext.open(playerSource, shop.inventoryId)
@@ -219,8 +230,8 @@ function TSSCreateShopService(inventoryContext)
             return false, 'Unsupported payment account'
         end
 
-        if not isPlayerNearby(playerSource, shop) then
-            return false, 'Move closer to the shop'
+        if not canAccess(playerSource, shop) then
+            return false, 'Shop access denied'
         end
 
         local shopInventory = inventoryContext.load(shop.inventoryId)
@@ -306,7 +317,7 @@ function TSSCreateShopService(inventoryContext)
         -- External banking adapters may yield. Reject stale plans and refund the same account.
         if playerInventory.revision ~= purchaseRequest.targetRevision
             or shopInventory.revision ~= purchaseRequest.revision
-            or not GetPlayerName(playerSource)
+            or not canAccess(playerSource, shop)
             or inventoryContext.identity(playerSource) ~= playerInventory.id then
             if purchaseCost > 0 then
                 local refundCallSucceeded, refundResult = pcall(
@@ -356,7 +367,7 @@ function TSSCreateShopService(inventoryContext)
 
     function shopService.Sell(playerSource, request)
         local shop = type(request.to) == 'string' and registeredShops[request.to:sub(6)]
-        if not shop or shop.inventoryId ~= request.to or not isPlayerNearby(playerSource, shop) then return false, 'Move closer to the shop' end
+        if not shop or shop.inventoryId ~= request.to or not canAccess(playerSource, shop) then return false, 'Shop access denied' end
         local sourceInventory, item = inventoryContext.findCarried(playerSource, { inventoryId = request.from, id = request.itemId })
         if not sourceInventory or not item then return false, 'Sell items from your own inventory' end
         local shopInventory = inventoryContext.load(shop.inventoryId)
@@ -398,7 +409,7 @@ function TSSCreateShopService(inventoryContext)
             if not called or paid ~= true then unlock(); return false, 'Shop payment refused' end
         end
         if sourceInventory.revision ~= request.revision or shopInventory.revision ~= request.targetRevision
-            or inventoryContext.identity(playerSource) ~= characterId or not isPlayerNearby(playerSource, shop) then
+            or inventoryContext.identity(playerSource) ~= characterId or not canAccess(playerSource, shop) then
             reversePayment(); unlock(); return false, 'Sale cancelled; inventory changed'
         end
         sourceInventory.items, sourceInventory.nextItemId = planned.items, planned.nextItemId
@@ -420,7 +431,7 @@ function TSSCreateShopService(inventoryContext)
             local sessionChanged = false
 
             for _, shop in pairs(registeredShops) do
-                if inventorySession[shop.inventoryId] and not isPlayerNearby(playerSource, shop) then
+                if inventorySession[shop.inventoryId] and not canAccess(playerSource, shop) then
                     inventorySession[shop.inventoryId] = nil
                     sessionChanged = true
                 end

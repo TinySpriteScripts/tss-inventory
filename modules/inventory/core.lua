@@ -35,6 +35,14 @@ function inventoryCore.integer(value, minimum, maximum)
         and value >= minimum and value <= maximum
 end
 
+function inventoryCore.validGroups(groups)
+    if type(groups) ~= 'table' or next(groups) == nil then return false end
+    for name, grade in pairs(groups) do
+        if type(name) ~= 'string' or name == '' or not inventoryCore.integer(grade, 0, 2147483647) then return false end
+    end
+    return true
+end
+
 function inventoryCore.size(size)
     return type(size) == 'table' and inventoryCore.integer(size.x, 1, Config.MaxDimension)
         and inventoryCore.integer(size.y, 1, Config.MaxDimension) and size.x * size.y <= Config.MaxCells

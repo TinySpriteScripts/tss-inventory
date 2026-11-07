@@ -1,6 +1,7 @@
 function TSSCreateStashService(context)
     local service = {}
     local core = TSSCore
+    local playerBridge = exports.tss_bridge:GetModules({ 'Player' }, Config.TSS).Player
 
     local function baseId(stashName) return 'stash_' .. stashName end
 
@@ -19,6 +20,12 @@ function TSSCreateStashService(context)
         return distance <= TSSStashDistance(definition) ^ 2
     end
 
+    local function canAccess(playerSource, definition)
+        return isNearby(playerSource, definition)
+            and (definition.groups == nil or core.validGroups(definition.groups)
+                and playerBridge.HasGroup(playerSource, definition.groups))
+    end
+
     function service.CanAccess(playerSource, inventory)
         if inventory.id:sub(1, 6) ~= 'stash_' then return nil end
         for stashName, definition in pairs(TSSStaticStashes) do
@@ -27,7 +34,7 @@ function TSSCreateStashService(context)
                 local owner = context.citizen(playerSource)
                 return owner ~= nil and inventory.type == 'stash' and inventory.metadata.staticStash == stashName
                     and (definition.shared ~= false or inventory.owner == owner)
-                    and inventory.id == inventoryId(stashName, definition, owner) and isNearby(playerSource, definition)
+                    and inventory.id == inventoryId(stashName, definition, owner) and canAccess(playerSource, definition)
             end
         end
         return nil
@@ -45,7 +52,9 @@ function TSSCreateStashService(context)
         for _, fieldName in ipairs({ 'whitelist', 'blacklist' }) do
             if definition[fieldName] ~= nil and type(definition[fieldName]) ~= 'table' then return false, 'Invalid configured stash item rules' end
         end
-        if not isNearby(playerSource, definition) then return false, 'Move closer to the stash' end
+        if not canAccess(playerSource, definition) then
+            return false, definition.groups and 'Stash access denied' or 'Move closer to the stash'
+        end
         local own, playerError = context.player(playerSource)
         if not own then return false, playerError end
         local identifier = inventoryId(stashName, definition, own.owner)
@@ -75,7 +84,7 @@ function TSSCreateStashService(context)
         planned.whitelist, planned.blacklist = core.copy(definition.whitelist or {}), core.copy(definition.blacklist or {})
         planned.maxWeight = definition.maxWeight
         if planned.maxWeight and core.weight(planned) > planned.maxWeight then return false, 'Existing items exceed the configured stash weight limit' end
-        if context.identity(playerSource) ~= own.id or not isNearby(playerSource, definition) then return false, 'Stash is no longer accessible' end
+        if context.identity(playerSource) ~= own.id or not canAccess(playerSource, definition) then return false, 'Stash is no longer accessible' end
         for _, fieldName in ipairs({ 'label', 'coords', 'size', 'items', 'whitelist', 'blacklist' }) do inventory[fieldName] = planned[fieldName] end
         inventory.maxWeight = planned.maxWeight
         context.commit(inventory)
