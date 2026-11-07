@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { applyAppearance } from "./appearance.js";
+import { AppearanceSettings } from "./AppearanceSettings.jsx";
 import { DOCK_SLOT_IDS, getDockSlots } from "./docking.js";
 import {
   inventoryState,
@@ -39,6 +41,7 @@ import {
   setSoundPreference,
   setInventoryPreference,
   getInterfaceScale,
+  getInventoryPadding,
   previewInventorySound,
   getHudPositionStyle,
   startHudDrag,
@@ -392,7 +395,7 @@ function InventoryWindow({
         left: Math.max(0, Math.min(innerWidth - 180, layout.x)),
         top: Math.max(0, Math.min(innerHeight - 40, layout.y)),
         width: Math.min(
-          inventory.size.x * inventoryState.cellSize + 16,
+          inventory.size.x * inventoryState.cellSize + getInventoryPadding() * 2,
           innerWidth - 24,
         ),
         maxHeight: Math.max(80, innerHeight - Math.max(0, layout.y) - 35),
@@ -936,10 +939,16 @@ function DockingSlots() {
 }
 
 function InventorySettings() {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const moveDisplaysButton = useRef(null);
+  const editableAppearance = inventoryState.playerSettings.appearanceEditable === true;
+  const showAppearance = appearanceOpen && editableAppearance;
+  useEffect(() => {
+    if (!inventoryState.settingsOpen) setAppearanceOpen(false);
+  }, [inventoryState.settingsOpen]);
   useLayoutEffect(() => {
-    if (inventoryState.settingsOpen && !inventoryState.hudPositioning) moveDisplaysButton.current?.focus();
-  }, [inventoryState.settingsOpen, inventoryState.hudPositioning]);
+    if (inventoryState.settingsOpen && !inventoryState.hudPositioning && !showAppearance) moveDisplaysButton.current?.focus();
+  }, [inventoryState.settingsOpen, inventoryState.hudPositioning, showAppearance]);
   if (!inventoryState.settingsOpen) return null;
   if (inventoryState.hudPositioning) return <div className="hud-position-toolbar">
     <span>Drag the previews to position your displays.</span>
@@ -952,7 +961,7 @@ function InventorySettings() {
 
   return (
     <div className="settings-overlay">
-      <section id="inventory-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <section id="inventory-settings" className={showAppearance ? "appearance-open" : undefined} role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header>
           <strong id="settings-title">Inventory settings</strong>
           <button aria-label="Close settings" disabled={saving} onClick={closeInventorySettings}>
@@ -961,7 +970,14 @@ function InventorySettings() {
             </svg>
           </button>
         </header>
+        <nav className="settings-tabs" aria-label="Inventory settings sections">
+          <button aria-pressed={!showAppearance} disabled={saving} onClick={() => setAppearanceOpen(false)}>General</button>
+          <button aria-pressed={showAppearance} disabled={saving || !editableAppearance} onClick={() => setAppearanceOpen(true)}>
+            {editableAppearance ? "Appearance" : "Appearance locked"}
+          </button>
+        </nav>
         <div className="settings-content">
+          {showAppearance ? <AppearanceSettings saving={saving} /> : <>
           <section className="settings-group" aria-labelledby="display-settings-title">
             <h4 id="display-settings-title">Displays</h4>
             <label className="settings-toggle"><input type="checkbox" checked={inventoryState.settingsDraft.weaponDisplay !== false} disabled={saving}
@@ -1010,6 +1026,7 @@ function InventorySettings() {
             <p>Restore your default window layout.</p>
             <button disabled={saving} onClick={resetInventoryLayout}>Reset windows</button>
           </section>
+          </>}
         </div>
         <div className="settings-actions">
           <button disabled={saving} onClick={closeInventorySettings}>Cancel</button>
@@ -1094,6 +1111,13 @@ function ItemBoxNotifications() {
 export function InventoryApp() {
   useEffect(announceInventoryUiReady, []);
   useSyncExternalStore(subscribeToInventory, getStoreVersion);
+  const savedSettings = inventoryState.playerSettings;
+  const appearance = inventoryState.settingsOpen ? inventoryState.settingsDraft.appearance : savedSettings.appearance;
+  useLayoutEffect(() => applyAppearance({
+    appearance,
+    appearanceDefaults: savedSettings.appearanceDefaults,
+    appearanceEditable: savedSettings.appearanceEditable,
+  }), [appearance, savedSettings.appearanceDefaults, savedSettings.appearanceEditable]);
 
   return (
     <>

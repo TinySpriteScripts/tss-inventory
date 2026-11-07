@@ -14575,91 +14575,219 @@
   var import_client = __toESM(require_client(), 1);
 
   // src/components.jsx
-  var import_react = __toESM(require_react(), 1);
+  var import_react2 = __toESM(require_react(), 1);
   var import_react_dom = __toESM(require_react_dom(), 1);
 
-  // src/docking.js
-  var DOCK_SLOT_IDS = [
-    "left-top",
-    "left-bottom",
-    "top-left",
-    "top-right",
-    "right-top",
-    "right-bottom",
-    "bottom-left",
-    "bottom-right"
+  // src/appearance.js
+  var appearanceAreas = [
+    { key: "accent", label: "Accent", colour: "#d94a50" },
+    { key: "panel", label: "Window background", colour: "#0f1113", opacity: 85 },
+    { key: "titleBar", label: "Title bar", colour: "#0f1113", opacity: 0 },
+    { key: "grid", label: "Empty slots", colour: "#0f1113", opacity: 0 },
+    { key: "item", label: "Occupied slots", colour: "#25282b", opacity: 94 },
+    { key: "selected", label: "Selected slots", colour: "#372225", opacity: 96 },
+    { key: "menu", label: "Context menu", colour: "#121416", opacity: 98 },
+    { key: "tooltip", label: "Item details", colour: "#121416", opacity: 98 },
+    { key: "dialog", label: "Popups", colour: "#121416", opacity: 98 },
+    { key: "settings", label: "Settings panel", colour: "#111316", opacity: 98 },
+    { key: "control", label: "Buttons and inputs", colour: "#202226" },
+    { key: "hud", label: "Weapon display", colour: "#111316", opacity: 88 },
+    { key: "notification", label: "Item notifications", colour: "#111316", opacity: 94 },
+    { key: "ghost", label: "Dragged item", colour: "#1e2022", opacity: 60 },
+    { key: "track", label: "Progress tracks", colour: "#ffffff", opacity: 12 },
+    { key: "text", label: "Main text", colour: "#eeeeee", solidOnly: true },
+    { key: "accentText", label: "Accent button text", colour: "#ffffff", solidOnly: true },
+    { key: "muted", label: "Secondary text", colour: "#aaaaaa", solidOnly: true },
+    { key: "border", label: "Panel and control borders", colour: "#ffffff", opacity: 15, solidOnly: true },
+    { key: "gridLine", label: "Grid lines", colour: "#ffffff", opacity: 10, solidOnly: true },
+    { key: "success", label: "Valid placement and crafting", colour: "#44c970", solidOnly: true },
+    { key: "warning", label: "Invalid placement", colour: "#e4a25b", solidOnly: true },
+    { key: "price", label: "Buy price", colour: "#ef888d", solidOnly: true },
+    { key: "salePrice", label: "Sell price", colour: "#78c694", solidOnly: true }
   ];
-  var LEGACY_DOCK_SLOTS = {
-    left: "left-top",
-    right: "right-top",
-    top: "top-left",
-    bottom: "bottom-left"
-  };
-  function getDockSlots(viewportWidth, viewportHeight) {
-    const sideWidth = Math.floor(viewportWidth / 6);
-    const horizontalHeight = Math.floor(viewportHeight * 0.28);
-    const centreColumn = Math.floor(viewportWidth / 2);
-    const centreRow = Math.floor(viewportHeight / 2);
-    const rightColumn = viewportWidth - sideWidth;
-    const bottomRow = viewportHeight - horizontalHeight;
-    return [
-      { id: "left-top", x: 0, y: 0, width: sideWidth, height: centreRow },
-      {
-        id: "left-bottom",
-        x: 0,
-        y: centreRow,
-        width: sideWidth,
-        height: viewportHeight - centreRow
-      },
-      {
-        id: "top-left",
-        x: sideWidth,
-        y: 0,
-        width: centreColumn - sideWidth,
-        height: horizontalHeight
-      },
-      {
-        id: "top-right",
-        x: centreColumn,
-        y: 0,
-        width: rightColumn - centreColumn,
-        height: horizontalHeight
-      },
-      {
-        id: "right-top",
-        x: rightColumn,
-        y: 0,
-        width: sideWidth,
-        height: centreRow
-      },
-      {
-        id: "right-bottom",
-        x: rightColumn,
-        y: centreRow,
-        width: sideWidth,
-        height: viewportHeight - centreRow
-      },
-      {
-        id: "bottom-left",
-        x: sideWidth,
-        y: bottomRow,
-        width: centreColumn - sideWidth,
-        height: horizontalHeight
-      },
-      {
-        id: "bottom-right",
-        x: centreColumn,
-        y: bottomRow,
-        width: rightColumn - centreColumn,
-        height: horizontalHeight
+  var appearanceLayoutControls = [
+    { key: "windowRadius", label: "Window radius", max: 18, defaultValue: 0 },
+    { key: "slotRadius", label: "Slot radius", max: 12, defaultValue: 0 },
+    { key: "padding", label: "Window padding", max: 16, defaultValue: 8 }
+  ];
+  function appearanceLayout(settings) {
+    const overrides = settings.appearanceEditable === true ? settings.appearance?.layout : void 0;
+    return Object.fromEntries(appearanceLayoutControls.map(({ key, defaultValue }) => [
+      key,
+      overrides?.[key] ?? settings.appearanceDefaults?.layout?.[key] ?? defaultValue
+    ]));
+  }
+  function colourChannels(colour) {
+    return [1, 3, 5].map((start) => Number.parseInt(colour.slice(start, start + 2), 16));
+  }
+  function areaPaint(area, settings) {
+    const defaultPaint = {
+      mode: "solid",
+      first: area.colour,
+      firstOpacity: area.opacity ?? 100,
+      second: "#41434b",
+      secondOpacity: 100,
+      angle: 90,
+      balance: 50
+    };
+    return {
+      ...defaultPaint,
+      ...settings.appearanceDefaults?.[area.key],
+      ...settings.appearanceEditable === true ? settings.appearance?.[area.key] : void 0
+    };
+  }
+  function colourWithOpacity(colour, opacity) {
+    return `rgba(${colourChannels(colour).join(", ")}, ${opacity / 100})`;
+  }
+  function paintBackground(paint) {
+    const first = colourWithOpacity(paint.first, paint.firstOpacity);
+    if (paint.mode !== "gradient") return first;
+    const second = colourWithOpacity(paint.second, paint.secondOpacity);
+    return `linear-gradient(${paint.angle}deg, ${first}, ${paint.balance}%, ${second})`;
+  }
+  function applyAppearance(settings) {
+    const root = document.documentElement.style;
+    const properties = [];
+    const set = (name, value) => {
+      root.setProperty(name, value);
+      properties.push(name);
+    };
+    const layout = appearanceLayout(settings);
+    set("--theme-window-radius", `${layout.windowRadius}px`);
+    set("--theme-slot-radius", `${layout.slotRadius}px`);
+    set("--theme-padding", `${layout.padding}px`);
+    for (const area of appearanceAreas) {
+      if (!settings.appearanceDefaults?.[area.key] && !(settings.appearanceEditable === true && settings.appearance?.[area.key])) continue;
+      const paint = areaPaint(area, settings);
+      const cssName = area.key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      const background = paintBackground(paint);
+      set(`--theme-${cssName}`, area.key === "grid" && paint.mode === "solid" ? `linear-gradient(${background}, ${background})` : background);
+      if (["accent", "success", "warning"].includes(area.key)) {
+        set(`--theme-${cssName}-rgb`, colourChannels(paint.first).join(", "));
       }
-    ];
+      if (area.key === "accent") set("--theme-accent-line", colourWithOpacity(paint.first, paint.firstOpacity));
+    }
+    return () => properties.forEach((name) => root.removeProperty(name));
   }
-  function getDockSlotAtPoint(pointerX, pointerY, viewportWidth, viewportHeight) {
-    return getDockSlots(viewportWidth, viewportHeight).find(
-      (slot) => pointerX >= slot.x && pointerX < slot.x + slot.width && pointerY >= slot.y && pointerY < slot.y + slot.height
-    )?.id || null;
+
+  // src/AppearanceSettings.jsx
+  var import_react = __toESM(require_react(), 1);
+
+  // src/appearancePresets.js
+  var solid = (first, firstOpacity = 100) => ({ mode: "solid", first, firstOpacity });
+  var gradient = (first, second, angle = 135, balance = 50) => ({
+    mode: "gradient",
+    first,
+    second,
+    firstOpacity: 96,
+    secondOpacity: 93,
+    angle,
+    balance
+  });
+  function palette({ accent, panel, title, slot, selection, text, muted, line, success, warning, accentText, layout }) {
+    const surface = solid(panel.first, 98);
+    return {
+      accent,
+      panel,
+      titleBar: solid(title),
+      grid: solid(title, 60),
+      item: solid(slot, 96),
+      selected: solid(selection),
+      menu: surface,
+      tooltip: surface,
+      dialog: surface,
+      settings: surface,
+      control: solid(slot),
+      hud: surface,
+      notification: surface,
+      ghost: solid(slot, 85),
+      track: solid(line, 55),
+      text: solid(text),
+      muted: solid(muted),
+      accentText: solid(accentText),
+      border: solid(line, 80),
+      gridLine: solid(line, 60),
+      success: solid(success),
+      warning: solid(warning),
+      price: solid(warning),
+      salePrice: solid(success),
+      layout
+    };
   }
+  var appearancePresets = [
+    {
+      id: "cyberpunk",
+      label: "Cyberpunk",
+      theme: palette({
+        accent: gradient("#ff40c7", "#45e7ff", 90, 42),
+        panel: gradient("#161028", "#0a2333"),
+        title: "#24123d",
+        slot: "#26203e",
+        selection: "#413062",
+        text: "#f8ecff",
+        muted: "#bfaee0",
+        line: "#6b51a5",
+        success: "#55efca",
+        warning: "#ffbf68",
+        accentText: "#140c22",
+        layout: { windowRadius: 5, slotRadius: 3, padding: 8 }
+      })
+    },
+    {
+      id: "ox-lib",
+      label: "Ox Lib",
+      theme: palette({
+        accent: solid("#1971c2"),
+        panel: solid("#1a1b1e", 97),
+        title: "#25262b",
+        slot: "#2c2e33",
+        selection: "#183e61",
+        text: "#f1f3f5",
+        muted: "#a6a7ab",
+        line: "#495057",
+        success: "#51cf66",
+        warning: "#ffd43b",
+        accentText: "#ffffff",
+        layout: { windowRadius: 8, slotRadius: 4, padding: 10 }
+      })
+    },
+    {
+      id: "zombie",
+      label: "Zombie",
+      theme: palette({
+        accent: solid("#abbd63"),
+        panel: gradient("#1a2118", "#2d241a", 160, 62),
+        title: "#2d3522",
+        slot: "#34392b",
+        selection: "#4a512e",
+        text: "#eee9d5",
+        muted: "#b8b798",
+        line: "#646a48",
+        success: "#a8c974",
+        warning: "#e49368",
+        accentText: "#161c10",
+        layout: { windowRadius: 2, slotRadius: 1, padding: 6 }
+      })
+    },
+    {
+      id: "kora",
+      label: "Kora",
+      theme: palette({
+        accent: solid("#95ff00"),
+        panel: solid("#151515", 97),
+        title: "#0a0a0a",
+        slot: "#202020",
+        selection: "#273415",
+        text: "#ededed",
+        muted: "#bbbbbb",
+        line: "#353535",
+        success: "#4ade80",
+        warning: "#f59e0b",
+        accentText: "#0a0a0a",
+        layout: { windowRadius: 8, slotRadius: 4, padding: 10 }
+      })
+    }
+  ];
 
   // src/sounds.js
   var audioContext = null;
@@ -14784,6 +14912,89 @@
       return { recipe: recipe.name, targetItemId: targetItem.id, item: { ...output, ...position }, duration: recipe.duration };
     }
     return null;
+  }
+
+  // src/docking.js
+  var DOCK_SLOT_IDS = [
+    "left-top",
+    "left-bottom",
+    "top-left",
+    "top-right",
+    "right-top",
+    "right-bottom",
+    "bottom-left",
+    "bottom-right"
+  ];
+  var LEGACY_DOCK_SLOTS = {
+    left: "left-top",
+    right: "right-top",
+    top: "top-left",
+    bottom: "bottom-left"
+  };
+  function getDockSlots(viewportWidth, viewportHeight) {
+    const sideWidth = Math.floor(viewportWidth / 6);
+    const horizontalHeight = Math.floor(viewportHeight * 0.28);
+    const centreColumn = Math.floor(viewportWidth / 2);
+    const centreRow = Math.floor(viewportHeight / 2);
+    const rightColumn = viewportWidth - sideWidth;
+    const bottomRow = viewportHeight - horizontalHeight;
+    return [
+      { id: "left-top", x: 0, y: 0, width: sideWidth, height: centreRow },
+      {
+        id: "left-bottom",
+        x: 0,
+        y: centreRow,
+        width: sideWidth,
+        height: viewportHeight - centreRow
+      },
+      {
+        id: "top-left",
+        x: sideWidth,
+        y: 0,
+        width: centreColumn - sideWidth,
+        height: horizontalHeight
+      },
+      {
+        id: "top-right",
+        x: centreColumn,
+        y: 0,
+        width: rightColumn - centreColumn,
+        height: horizontalHeight
+      },
+      {
+        id: "right-top",
+        x: rightColumn,
+        y: 0,
+        width: sideWidth,
+        height: centreRow
+      },
+      {
+        id: "right-bottom",
+        x: rightColumn,
+        y: centreRow,
+        width: sideWidth,
+        height: viewportHeight - centreRow
+      },
+      {
+        id: "bottom-left",
+        x: sideWidth,
+        y: bottomRow,
+        width: centreColumn - sideWidth,
+        height: horizontalHeight
+      },
+      {
+        id: "bottom-right",
+        x: centreColumn,
+        y: bottomRow,
+        width: rightColumn - centreColumn,
+        height: horizontalHeight
+      }
+    ];
+  }
+  function getDockSlotAtPoint(pointerX, pointerY, viewportWidth, viewportHeight) {
+    return getDockSlots(viewportWidth, viewportHeight).find(
+      (slot) => pointerX >= slot.x && pointerX < slot.x + slot.width && pointerY >= slot.y && pointerY < slot.y + slot.height
+    )?.id || null;
   }
 
   // src/inventoryStore.js
@@ -14969,12 +15180,13 @@
   }
   function getInventoryLayout(inventory, inventoryIndex = 0) {
     if (!inventoryState.layouts[inventory.id]) {
+      const padding = getInventoryPadding();
       const windowWidth = Math.min(
-        Math.max(220, inventory.size.x * inventoryState.cellSize + 16),
+        Math.max(220, inventory.size.x * inventoryState.cellSize + padding * 2),
         innerWidth - 24
       );
       const windowHeight = Math.min(
-        inventory.size.y * inventoryState.cellSize + 60,
+        inventory.size.y * inventoryState.cellSize + 44 + padding * 2,
         innerHeight - 32
       );
       const defaultX = inventory.type === "shop" ? innerWidth - windowWidth - 60 : 60 + inventoryIndex * 350;
@@ -15790,6 +16002,10 @@
     const settings = inventoryState.settingsOpen ? inventoryState.settingsDraft : inventoryState.playerSettings;
     return { small: 1, medium: 1.125, large: 1.25 }[settings.uiScale] || 1;
   }
+  function getInventoryPadding() {
+    const settings = inventoryState.playerSettings;
+    return appearanceLayout(inventoryState.settingsOpen ? { ...settings, appearance: inventoryState.settingsDraft.appearance } : settings).padding;
+  }
   function applyInterfaceScale() {
     inventoryState.cellSize = inventoryState.baseCellSize * getInterfaceScale();
   }
@@ -15811,6 +16027,11 @@
   }
   function previewInventorySound() {
     playInventorySound("move", inventoryState.settingsDraft);
+  }
+  function setInventoryAppearance(appearance) {
+    if (!inventoryState.settingsOpen || inventoryState.settingsSaving || inventoryState.playerSettings.appearanceEditable !== true) return;
+    inventoryState.settingsDraft.appearance = appearance;
+    publishChanges();
   }
   async function closeInventorySettings() {
     if (inventoryState.settingsSaving) return;
@@ -16444,18 +16665,158 @@
     }
   }
 
-  // src/components.jsx
+  // src/AppearanceSettings.jsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
+  var channelLabels = ["Red", "Green", "Blue"];
+  function Slider({ label, min = 0, max, value, suffix = "", onChange }) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "appearance-slider", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+        label,
+        " ",
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("output", { children: [
+          value,
+          suffix
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          type: "range",
+          "aria-label": label,
+          min,
+          max,
+          value,
+          onChange: (event) => onChange(Number(event.target.value))
+        }
+      )
+    ] });
+  }
+  function ColourPicker({ label, colour, opacity, onColour, onOpacity }) {
+    const channels = colourChannels(colour);
+    const changeChannel = (index, value) => {
+      const updated = channels.map((channel, channelIndex) => channelIndex === index ? value : channel);
+      onColour(`#${updated.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`);
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("fieldset", { className: "appearance-colour", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("legend", { children: label }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-colour-value", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": "true", style: { background: colour } }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: colour.toUpperCase() })
+      ] }),
+      channelLabels.map((channel, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        Slider,
+        {
+          label: channel,
+          max: 255,
+          value: channels[index],
+          onChange: (value) => changeChannel(index, value)
+        },
+        channel
+      )),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Slider, { label: "Opacity", max: 100, value: opacity, suffix: "%", onChange: onOpacity })
+    ] });
+  }
+  function AppearanceSettings({ saving }) {
+    const [areaKey, setAreaKey] = (0, import_react.useState)("accent");
+    const settings = inventoryState.settingsDraft;
+    const area = appearanceAreas.find((entry) => entry.key === areaKey);
+    const paint = areaPaint(area, settings);
+    const gradient2 = paint.mode === "gradient";
+    const layout = appearanceLayout(settings);
+    const update = (changes) => setInventoryAppearance({
+      ...settings.appearance,
+      [area.key]: { ...paint, ...changes }
+    });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("fieldset", { className: "appearance-editor", disabled: saving, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("legend", { className: "appearance-legend", children: "Theme colours" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "appearance-presets", role: "group", "aria-label": "Theme presets", children: appearancePresets.map(({ id, label, theme }) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { type: "button", onClick: () => setInventoryAppearance(theme), children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-hidden": "true", style: { background: paintBackground(theme.accent) } }),
+        label
+      ] }, id)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-preview", "aria-label": "Inventory theme preview", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "appearance-preview-title", children: "Inventory preview" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-preview-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: "images/bandage.png", alt: "Bandage" }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "appearance-preview-empty" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "appearance-preview-selected" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-options", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+          "Area",
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: areaKey, onChange: (event) => setAreaKey(event.target.value), children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("optgroup", { label: "Surfaces", children: appearanceAreas.filter((entry) => !entry.solidOnly).map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: entry.key, children: entry.label }, entry.key)) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("optgroup", { label: "Text and indicators", children: appearanceAreas.filter((entry) => entry.solidOnly).map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: entry.key, children: entry.label }, entry.key)) })
+          ] })
+        ] }),
+        !area.solidOnly && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+          "Fill",
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: paint.mode, onChange: (event) => update({ mode: event.target.value }), children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "solid", children: "Solid" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "gradient", children: "Gradient" })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "appearance-swatch", "aria-hidden": "true", style: { background: paintBackground(paint) } }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-colours", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          ColourPicker,
+          {
+            label: gradient2 ? "First colour" : "Colour",
+            colour: paint.first,
+            opacity: paint.firstOpacity,
+            onColour: (first) => update({ first }),
+            onOpacity: (firstOpacity) => update({ firstOpacity })
+          }
+        ),
+        gradient2 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          ColourPicker,
+          {
+            label: "Second colour",
+            colour: paint.second,
+            opacity: paint.secondOpacity,
+            onColour: (second) => update({ second }),
+            onOpacity: (secondOpacity) => update({ secondOpacity })
+          }
+        )
+      ] }),
+      gradient2 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-gradient", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Slider, { label: "Direction", max: 360, value: paint.angle, suffix: "\xB0", onChange: (angle) => update({ angle }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Slider, { label: "First colour balance", min: 1, max: 99, value: paint.balance, suffix: "%", onChange: (balance) => update({ balance }) })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "appearance-layout", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "Shape and spacing" }),
+        appearanceLayoutControls.map(({ key, label, max }) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          Slider,
+          {
+            label,
+            max,
+            value: layout[key],
+            suffix: " px",
+            onChange: (value) => setInventoryAppearance({
+              ...settings.appearance,
+              layout: { ...settings.appearance?.layout, [key]: value }
+            })
+          },
+          key
+        ))
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => setInventoryAppearance({}), children: "Reset theme" })
+    ] });
+  }
+
+  // src/components.jsx
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   function ItemImage({
     item,
     isRotated = item.rotated === true,
     isGhost = false
   }) {
-    const [hasImageError, setHasImageError] = (0, import_react.useState)(false);
+    const [hasImageError, setHasImageError] = (0, import_react2.useState)(false);
     const imageName = item.definition.image;
     const imageIsAvailable = imageName && /^[\w.-]+\.(png|svg)$/i.test(imageName) && !hasImageError;
     if (!imageIsAvailable)
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "fallback", children: item.definition.label || item.name });
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "fallback", children: item.definition.label || item.name });
     const imageStyle = isRotated || isGhost ? {
       position: "absolute",
       left: "50%",
@@ -16464,7 +16825,7 @@
       height: item.definition.size.y * inventoryState.cellSize * 0.8,
       transform: `translate(-50%, -50%) rotate(${isRotated ? 90 : 0}deg)`
     } : void 0;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "img",
       {
         src: `images/${imageName}`,
@@ -16488,10 +16849,10 @@
     const red = parseInt(color.slice(1, 3), 16);
     const green = parseInt(color.slice(3, 5), 16);
     const blue = parseInt(color.slice(5, 7), 16);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "rarity-frame", "data-rarity": rarity, style: {
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "rarity-frame", "data-rarity": rarity, style: {
       "--rarity-color": color,
       "--rarity-tint": `rgba(${red}, ${green}, ${blue}, 0.09)`
-    }, "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    }, "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "path",
       {
         d: "M0 9V0H9 M91 0H100V9 M100 91V100H91 M9 100H0V91",
@@ -16510,7 +16871,7 @@
       isDragSource && "drag-source",
       isShop && item.canBuy !== false && item.stock === 0 && "sold-out"
     ].filter(Boolean).join(" ");
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         className: itemClasses,
@@ -16534,18 +16895,18 @@
           return isShop ? openQuantityDialog(inventory, item, true) : requestItemAction(inventory, item, "use");
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: isShop ? item.stock === false ? "\u221E" : item.stock : item.amount }),
-          isShop && item.canBuy !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemImage, { item }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RarityFrame, { item }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "amount", children: isShop ? item.stock === false ? "\u221E" : item.stock : item.amount }),
+          isShop && item.canBuy !== false && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "price", children: [
             "$",
             item.buyPrice ?? item.price
           ] }),
-          isShop && item.canBuy === false && item.canSell && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price shop-sell-price", children: [
+          isShop && item.canBuy === false && item.canSell && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "price shop-sell-price", children: [
             "+$",
             item.sellPrice
           ] }),
-          sellOffer && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "price sell-price", children: [
+          sellOffer && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "price sell-price", children: [
             "+$",
             sellOffer.product.sellPrice
           ] })
@@ -16563,7 +16924,7 @@
         if (column < 1 || row < 1 || column > inventory.size.x || row > inventory.size.y)
           continue;
         cells.push(
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "div",
             {
               className: "placement-cell",
@@ -16579,21 +16940,21 @@
         );
       }
     }
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `placement${destination.isValid ? "" : " invalid"}${destination.craft ? " crafting-preview" : ""}`, children: cells });
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: `placement${destination.isValid ? "" : " invalid"}${destination.craft ? " crafting-preview" : ""}`, children: cells });
   }
   function CraftingItem({ craft }) {
     const width = craft.item.definition.size.x * inventoryState.cellSize;
     const height = craft.item.definition.size.y * inventoryState.cellSize;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "crafting-item", style: {
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "crafting-item", style: {
       left: (craft.item.x - 1) * inventoryState.cellSize,
       top: (craft.item.y - 1) * inventoryState.cellSize,
       width,
       height
     }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item: craft.item }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { className: "crafting-progress", width, height, viewBox: `0 0 ${width} ${height}`, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { className: "crafting-track", x: "1.5", y: "1.5", width: width - 3, height: height - 3 }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemImage, { item: craft.item }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("svg", { className: "crafting-progress", width, height, viewBox: `0 0 ${width} ${height}`, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("rect", { className: "crafting-track", x: "1.5", y: "1.5", width: width - 3, height: height - 3 }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "rect",
           {
             className: "crafting-fill",
@@ -16610,7 +16971,7 @@
   }
   function InventoryGrid({ inventory }) {
     const craft = inventoryState.crafting?.inventoryId === inventory.id ? inventoryState.crafting : null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "body", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "body", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         className: "grid",
@@ -16622,7 +16983,7 @@
         children: [
           inventory.items.map((item) => {
             const remainingAmount = craft?.ingredients?.[String(item.id)] ?? item.amount;
-            return remainingAmount > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            return remainingAmount > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               InventoryItem,
               {
                 inventory,
@@ -16631,21 +16992,21 @@
               item.id
             );
           }),
-          craft && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CraftingItem, { craft }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PlacementCells, { inventory })
+          craft && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(CraftingItem, { craft }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PlacementCells, { inventory })
         ]
       }
     ) });
   }
   function InventoryStatus({ inventory }) {
     if (inventory.type === "shop") {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "status", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "status", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "div",
         {
           className: "payment-methods",
           role: "group",
           "aria-label": "Payment method",
-          children: ["cash", "bank"].map((paymentMethod) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          children: ["cash", "bank"].map((paymentMethod) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               className: "payment-button",
@@ -16666,9 +17027,9 @@
     const capacityRatio = hasWeightLimit ? (inventory.weight || 0) / inventory.maxWeight : occupiedCells / (inventory.size.x * inventory.size.y);
     const capacityPercent = Math.max(0, Math.min(1, capacityRatio)) * 100;
     const weightLabel = `${((inventory.weight || 0) / 1e3).toFixed(2)} kg${hasWeightLimit ? ` / ${(inventory.maxWeight / 1e3).toFixed(2)} kg` : ""}`;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "status", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: weightLabel }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "status", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: weightLabel }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "div",
         {
           className: "capacity-bar",
@@ -16678,7 +17039,7 @@
           "aria-valuemax": 100,
           "aria-valuenow": Math.round(capacityPercent),
           title: `${Math.round(capacityPercent)}% ${hasWeightLimit ? "weight capacity" : "grid space"} used`,
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "div",
             {
               className: "capacity-fill",
@@ -16690,7 +17051,7 @@
     ] });
   }
   function WindowButton({ children, label, onClick, className }) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "button",
       {
         className,
@@ -16703,15 +17064,15 @@
     );
   }
   function WindowControls({ inventory, isDocked }) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "controls", children: [
-      inventory.isOwn === true && inventoryState.clothingEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Clothing", onClick: toggleClothingPanel, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M6 3 2 6l2 4 2-1v8h8V9l2 1 2-4-4-3c-1 3-7 3-8 0Z" }) }) }),
-      inventory.type !== "shop" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Repack inventory", onClick: () => repackInventory(inventory), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 2h12" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "2", y: "4", width: "5", height: "4" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "9", y: "4", width: "5", height: "4" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: "2", y: "10", width: "12", height: "4" })
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "controls", children: [
+      inventory.isOwn === true && inventoryState.clothingEnabled && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowButton, { label: "Clothing", onClick: toggleClothingPanel, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M6 3 2 6l2 4 2-1v8h8V9l2 1 2-4-4-3c-1 3-7 3-8 0Z" }) }) }),
+      inventory.type !== "shop" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowButton, { label: "Repack inventory", onClick: () => repackInventory(inventory), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("svg", { width: "13", height: "13", viewBox: "0 0 16 16", "aria-hidden": "true", fill: "none", stroke: "currentColor", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M2 2h12" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("rect", { x: "2", y: "4", width: "5", height: "4" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("rect", { x: "9", y: "4", width: "5", height: "4" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("rect", { x: "2", y: "10", width: "12", height: "4" })
       ] }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         WindowButton,
         {
           label: isDocked ? "Undock active tab" : "Bring to front",
@@ -16719,7 +17080,7 @@
           children: "\u25A3"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         WindowButton,
         {
           label: getInventoryLayout(inventory).minimised ? "Restore" : "Minimise",
@@ -16727,7 +17088,7 @@
           children: getInventoryLayout(inventory).minimised ? "+" : "\u2212"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         WindowButton,
         {
           label: "Close inventory",
@@ -16754,13 +17115,13 @@
       left: Math.max(0, Math.min(innerWidth - 180, layout.x)),
       top: Math.max(0, Math.min(innerHeight - 40, layout.y)),
       width: Math.min(
-        inventory.size.x * inventoryState.cellSize + 16,
+        inventory.size.x * inventoryState.cellSize + getInventoryPadding() * 2,
         innerWidth - 24
       ),
       maxHeight: Math.max(80, innerHeight - Math.max(0, layout.y) - 35),
       zIndex: layout.frontOrder || 10
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {
         className: `window${isDocked ? " docked" : ""}${layout.minimised ? " minimised" : ""}`,
@@ -16769,13 +17130,13 @@
         "data-inventory": isDocked ? void 0 : inventory.id,
         style: windowStyle,
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "div",
             {
               className: "header",
               onPointerDown: isDocked ? void 0 : (pointerEvent) => startWindowDrag(inventory, pointerEvent),
               children: [
-                isDocked ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "tabs", role: "tablist", children: groupedInventories.map((groupedInventory) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                isDocked ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "tabs", role: "tablist", children: groupedInventories.map((groupedInventory) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     role: "tab",
@@ -16786,21 +17147,21 @@
                     children: groupedInventory.label
                   },
                   groupedInventory.id
-                )) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "title", children: inventory.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowControls, { inventory, isDocked })
+                )) }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: inventory.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowControls, { inventory, isDocked })
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryGrid, { inventory }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryStatus, { inventory })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventoryGrid, { inventory }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventoryStatus, { inventory })
         ]
       }
     );
   }
   function ClothingWindow() {
-    const [position, setPosition] = (0, import_react.useState)({ x: Math.max(12, innerWidth - 370), y: 90 });
-    const [minimised, setMinimised] = (0, import_react.useState)(false);
-    const dragOffset = (0, import_react.useRef)(null);
+    const [position, setPosition] = (0, import_react2.useState)({ x: Math.max(12, innerWidth - 370), y: 90 });
+    const [minimised, setMinimised] = (0, import_react2.useState)(false);
+    const dragOffset = (0, import_react2.useRef)(null);
     const panel = inventoryState.clothing;
     if (!inventoryState.clothingEnabled || !inventoryState.clothingOpen) return null;
     const equipment = panel?.inventory;
@@ -16816,14 +17177,14 @@
         y: Math.max(0, Math.min(innerHeight - 34, pointerEvent.clientY - dragOffset.current.y))
       });
     }
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {
         className: `window clothing-window${minimised ? " minimised" : ""}`,
         "aria-label": "Clothing equipment",
         style: { left: position.x, top: position.y, zIndex: 100 },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "header",
             {
               className: "header",
@@ -16836,21 +17197,21 @@
                 dragOffset.current = null;
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "title", children: "Clothing" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "controls", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: minimised ? "Restore clothing" : "Minimise clothing", onClick: () => setMinimised(!minimised), children: minimised ? "+" : "\u2212" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Close clothing", onClick: toggleClothingPanel, children: "\xD7" })
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: "Clothing" }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "controls", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowButton, { label: minimised ? "Restore clothing" : "Minimise clothing", onClick: () => setMinimised(!minimised), children: minimised ? "+" : "\u2212" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowButton, { label: "Close clothing", onClick: toggleClothingPanel, children: "\xD7" })
                 ] })
               ]
             }
           ),
-          !minimised && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "clothing-slots", children: [
+          !minimised && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "clothing-slots", children: [
             (panel?.slots || []).map((slot) => {
               const item = equipment?.items.find((candidate) => candidate.x === slot.x && candidate.y === slot.y);
               const destination = inventoryState.destination;
               const isTarget = destination?.clothingSlot === slot.id;
               const isDragging = item && inventoryState.drag?.inventoryId === equipment.id && inventoryState.drag?.itemId === item.id;
-              return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                 "div",
                 {
                   className: `clothing-slot${isTarget ? destination.isValid ? " valid" : " invalid" : ""}${isDragging ? " drag-source" : ""}`,
@@ -16862,17 +17223,17 @@
                   onMouseEnter: item ? (pointerEvent) => scheduleItemTooltip(item, pointerEvent) : void 0,
                   onMouseLeave: hideItemTooltip,
                   children: [
-                    item && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item })
+                    item && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemImage, { item }),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RarityFrame, { item })
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "clothing-slot-label", children: slot.label })
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "clothing-slot-label", children: slot.label })
                   ]
                 },
                 slot.id
               );
             }),
-            !equipment && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "clothing-loading", children: "Loading\u2026" })
+            !equipment && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "clothing-loading", children: "Loading\u2026" })
           ] })
         ]
       }
@@ -16889,7 +17250,7 @@
         (inventory) => inventory.id === inventoryState.activeTabs[dockSlotId]
       ) || groupedInventories[0];
       windows.push(
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           InventoryWindow,
           {
             inventory: activeInventory,
@@ -16903,15 +17264,15 @@
     for (const inventory of inventoryState.inventories) {
       if (!getInventoryLayout(inventory).dock)
         windows.push(
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWindow, { inventory }, inventory.id)
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventoryWindow, { inventory }, inventory.id)
         );
     }
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "workspace", children: windows });
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { id: "workspace", children: windows });
   }
   function ClampedPopup({ popupId, position, children, style }) {
-    const popupReference = (0, import_react.useRef)(null);
-    const [popupPosition, setPopupPosition] = (0, import_react.useState)(position);
-    (0, import_react.useLayoutEffect)(() => {
+    const popupReference = (0, import_react2.useRef)(null);
+    const [popupPosition, setPopupPosition] = (0, import_react2.useState)(position);
+    (0, import_react2.useLayoutEffect)(() => {
       const popupBounds = popupReference.current.getBoundingClientRect();
       setPopupPosition({
         x: Math.max(4, Math.min(position.x, innerWidth - popupBounds.width - 6)),
@@ -16921,7 +17282,7 @@
         )
       });
     }, [position.x, position.y]);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
         id: popupId,
@@ -16932,30 +17293,30 @@
     );
   }
   function DetailRow({ label, value, valueColor }) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "detail", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: label }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: valueColor ? { color: valueColor } : void 0, children: String(value) })
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "detail", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: label }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: valueColor ? { color: valueColor } : void 0, children: String(value) })
     ] });
   }
   function ItemTooltip() {
     const tooltip = inventoryState.tooltip;
-    if (!tooltip) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "tooltip", hidden: true });
+    if (!tooltip) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { id: "tooltip", hidden: true });
     const item = tooltip.item;
     const definition = item.definition;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       ClampedPopup,
       {
         popupId: "tooltip",
         position: tooltip,
         style: { borderTopColor: getItemRarityColor(item) || void 0 },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: definition.label || item.name }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: definition.description || definition.category }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
-          item.canSell && item.sellPrice !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Sell price", value: `$${item.sellPrice} each` }),
-          item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DetailRow, { label: "Buy price", value: `$${item.price} each` }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { children: definition.label || item.name }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { children: definition.description || definition.category }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DetailRow, { label: "Weight", value: `${definition.weight / 1e3} kg each` }),
+          item.canSell && item.sellPrice !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DetailRow, { label: "Sell price", value: `$${item.sellPrice} each` }),
+          item.price !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DetailRow, { label: "Buy price", value: `$${item.price} each` }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               DetailRow,
               {
                 label: "Stock",
@@ -16970,9 +17331,9 @@
               const progressValue = typeof metadataValue === "number" || typeof metadataValue === "string" && metadataValue.trim() !== "" ? Number(metadataValue) : NaN;
               if (metadataSettings?.progress === true && Number.isFinite(progressValue)) {
                 const progressAmount = Math.min(100, Math.max(0, progressValue));
-                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "detail metadata-progress-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: metadataLabel }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "detail metadata-progress-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: metadataLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "div",
                     {
                       className: "metadata-progress",
@@ -16981,12 +17342,12 @@
                       "aria-valuemin": 0,
                       "aria-valuemax": 100,
                       "aria-valuenow": progressAmount,
-                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "metadata-progress-fill", style: { width: `${progressAmount}%` } })
+                      children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "metadata-progress-fill", style: { width: `${progressAmount}%` } })
                     }
                   )
                 ] }, metadataKey);
               }
-              return metadataValue === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              return metadataValue === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 DetailRow,
                 {
                   label: metadataLabel,
@@ -17003,39 +17364,39 @@
   }
   function ItemContextMenu() {
     const contextMenu = inventoryState.contextMenu;
-    if (!contextMenu) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "context", hidden: true });
+    if (!contextMenu) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { id: "context", hidden: true });
     const { inventory, item } = contextMenu;
     if (contextMenu.attachmentSlot) {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClampedPopup, { popupId: "context", position: contextMenu, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => removeWeaponAttachment(contextMenu.attachmentSlot), children: "Disassemble" }) });
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ClampedPopup, { popupId: "context", position: contextMenu, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => removeWeaponAttachment(contextMenu.attachmentSlot), children: "Disassemble" }) });
     }
     if (inventory.metadata?.clothingEquipment) {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => unequipClothing(item.definition.clothingSlot), children: "Unequip" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => unequipClothing(item.definition.clothingSlot), children: "Unequip" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
       ] });
     }
     const binding = getItemBinding(item.name);
     const isCapturing = inventoryState.keybindCapture?.inventoryId === inventory.id && inventoryState.keybindCapture?.itemId === item.id;
     const canDrop = inventory.type === "player" && inventory.isOwn !== false || inventory.isPlayerExtra === true;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
-      inventory.type === "shop" ? item.canBuy !== false && item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-        item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
-        item.definition.throwable === true && canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => requestItemAction(inventory, item, "takeToHand"), children: "Take to hand" }),
-        inventoryState.weaponSystemEnabled && item.definition.weapon && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openWeaponAttachments(inventory, item), children: "Attachments" }),
-        (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(ClampedPopup, { popupId: "context", position: contextMenu, children: [
+      inventory.type === "shop" ? item.canBuy !== false && item.stock !== 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => openQuantityDialog(inventory, item, true), children: "Buy amount\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+        item.definition.useable !== false && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => requestItemAction(inventory, item, "use"), children: "Use" }),
+        item.definition.throwable === true && canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => requestItemAction(inventory, item, "takeToHand"), children: "Take to hand" }),
+        inventoryState.weaponSystemEnabled && item.definition.weapon && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => openWeaponAttachments(inventory, item), children: "Attachments" }),
+        (binding || item.definition.useable !== false) && (binding ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("button", { onClick: () => unbindItemKey(inventory, item), children: [
           "Unbind key (",
           binding.keyLabel,
           ")"
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => captureItemKey(inventory, item), children: isCapturing ? "Press a key\u2026" : "Keybind" })),
-        item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openQuantityDialog(inventory, item), children: "Split stack" }),
-        getSellOffer(inventory, item) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => sellItem(inventory, item), children: "Sell" }),
-          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => openSaleDialog(inventory, item), children: "Sell amount\u2026" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => captureItemKey(inventory, item), children: isCapturing ? "Press a key\u2026" : "Keybind" })),
+        item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => openQuantityDialog(inventory, item), children: "Split stack" }),
+        getSellOffer(inventory, item) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => sellItem(inventory, item), children: "Sell" }),
+          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => openSaleDialog(inventory, item), children: "Sell amount\u2026" })
         ] }),
-        canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
-        canDrop && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        canGiveFromInventory(inventory) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => giveItemToClosest(inventory, item), children: "Give" }),
+        canDrop && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               onClick: () => requestItemAction(inventory, item, "drop", {
@@ -17044,7 +17405,7 @@
               children: "Drop"
             }
           ),
-          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          item.amount > 1 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               onClick: () => openQuantityDialog(inventory, item, false, "drop"),
@@ -17053,23 +17414,23 @@
           )
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => showItemDetails(item, contextMenu), children: "Details" })
     ] });
   }
   function QuantityDialog() {
     const dialog = inventoryState.dialog;
-    const quantityReference = (0, import_react.useRef)(null);
-    (0, import_react.useLayoutEffect)(() => {
+    const quantityReference = (0, import_react2.useRef)(null);
+    (0, import_react2.useLayoutEffect)(() => {
       if (!dialog) return;
       quantityReference.current?.focus();
       quantityReference.current?.select();
     }, [dialog?.inventoryId, dialog?.itemId, dialog?.kind]);
-    if (!dialog) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "dialog", hidden: true });
+    if (!dialog) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { id: "dialog", hidden: true });
     const inventory = findInventory(dialog.inventoryId);
     const item = inventory?.items.find(
       (candidate) => candidate.id === dialog.itemId
     );
-    if (!item) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "dialog", hidden: true });
+    if (!item) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { id: "dialog", hidden: true });
     const isPurchase = dialog.kind === "purchase";
     const isSale = dialog.kind === "sale";
     const saleOffer = isSale && getSellOffer(inventory, item, dialog.shopId);
@@ -17079,9 +17440,9 @@
     const maximum = isPurchase ? item.stock === false ? 1e3 : Math.min(1e3, item.stock) : isSale ? Math.min(1e3, item.amount) : item.amount;
     const totalPrice = Number.isInteger(quantity) && quantity > 0 ? quantity * (isSale ? saleOffer?.product.sellPrice || 0 : item.buyPrice ?? item.price ?? 0) : 0;
     const dialogStyle = dialog.position ? { left: dialog.position.x, top: dialog.position.y, transform: "none" } : void 0;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "modal-backdrop" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "modal-backdrop" }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "div",
         {
           id: "dialog",
@@ -17090,22 +17451,22 @@
           "aria-labelledby": "dialog-title",
           style: dialogStyle,
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { id: "dialog-title", onPointerDown: startDialogDrag, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { id: "dialog-title", onPointerDown: startDialogDrag, children: [
               isPurchase ? "Buy " : isSale ? "Sell " : isDrop ? "Drop " : "",
               item.definition.label
             ] }),
-            isDropConfirmation ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "drop-confirmation", children: [
+            isDropConfirmation ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "drop-confirmation", children: [
               "Drop ",
               quantity,
               " ",
               item.definition.label,
               " into the world?"
-            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "div",
               {
                 className: !isPurchase && !isDrop && !isSale ? "quantity-entry split-quantity" : "quantity-entry",
                 children: [
-                  !isPurchase && !isDrop && !isSale && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "split-presets", "aria-label": "Quick split", children: [25, 50, 75].map((percentage) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  !isPurchase && !isDrop && !isSale && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "split-presets", "aria-label": "Quick split", children: [25, 50, 75].map((percentage) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "button",
                     {
                       onClick: () => updateDialogQuantity(
@@ -17126,7 +17487,7 @@
                     },
                     percentage
                   )) }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "input",
                     {
                       ref: quantityReference,
@@ -17141,13 +17502,13 @@
                 ]
               }
             ),
-            (isPurchase || isSale) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "purchase-total", children: [
+            (isPurchase || isSale) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "purchase-total", children: [
               "Total: $",
               totalPrice
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "buttons", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: closeQuantityDialog, children: "Cancel" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "confirm", onClick: confirmQuantityDialog, children: isPurchase ? "Buy" : isSale ? "Sell" : isDrop ? "Drop" : "Confirm" })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "buttons", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: closeQuantityDialog, children: "Cancel" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { className: "confirm", onClick: confirmQuantityDialog, children: isPurchase ? "Buy" : isSale ? "Sell" : isDrop ? "Drop" : "Confirm" })
             ] })
           ]
         }
@@ -17158,7 +17519,7 @@
     const drag = inventoryState.drag;
     const destination = inventoryState.destination;
     const item = destination?.craft?.item || getDraggedItem();
-    if (!drag || !item || destination?.isWeaponInspection && inventoryState.attachmentDrag?.ready) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "drag-ghost", hidden: true });
+    if (!drag || !item || destination?.isWeaponInspection && inventoryState.attachmentDrag?.ready) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "drag-ghost", hidden: true });
     const size = getItemFootprint(item, destination?.craft ? false : drag.isRotated);
     const ghostStyle = {
       width: destination?.ghostWidth || size.x * inventoryState.cellSize,
@@ -17166,15 +17527,15 @@
       left: destination?.screenX ?? inventoryState.pointer.x - drag.offsetX * inventoryState.cellSize,
       top: destination?.screenY ?? inventoryState.pointer.y - drag.offsetY * inventoryState.cellSize
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         className: `drag-ghost${destination?.isValid ? "" : " invalid"}${destination?.craft ? " crafting-ghost" : ""}`,
         style: ghostStyle,
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item, isRotated: destination?.craft ? false : drag.isRotated, isGhost: true }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(RarityFrame, { item }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "amount", children: destination?.craft || destination?.attachmentSlot ? 1 : drag.quantity })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemImage, { item, isRotated: destination?.craft ? false : drag.isRotated, isGhost: true }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(RarityFrame, { item }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "amount", children: destination?.craft || destination?.attachmentSlot ? 1 : drag.quantity })
         ]
       }
     );
@@ -17183,7 +17544,7 @@
     const drag = inventoryState.drag;
     const sourceInventory = drag && findInventory(drag.inventoryId);
     if (!drag || !canGiveFromInventory(sourceInventory)) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "nearby-player-targets", "aria-hidden": "true", children: inventoryState.nearbyPlayers.map((player) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "nearby-player-targets", "aria-hidden": "true", children: inventoryState.nearbyPlayers.map((player) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
         "data-player-target": player.id,
@@ -17199,8 +17560,8 @@
     const preview = inventoryState.attachmentPreview;
     const destination = inventoryState.destination;
     const draggedItem = getDraggedItem();
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "weapon-inspection", "aria-label": "Weapon attachments", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "weapon-inspection", "aria-label": "Weapon attachments", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "div",
         {
           className: "weapon-rotation-surface",
@@ -17208,17 +17569,17 @@
           "aria-label": "Drag to rotate weapon"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "header weapon-inspection-header", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "title", children: panel.weapon.definition.label }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "controls", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WindowButton, { label: "Close attachments", onClick: closeWeaponAttachments, children: "\xD7" }) })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "header weapon-inspection-header", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: panel.weapon.definition.label }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "controls", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WindowButton, { label: "Close attachments", onClick: closeWeaponAttachments, children: "\xD7" }) })
       ] }),
-      preview.status !== "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "weapon-preview-status", role: "status", children: preview.status === "error" ? preview.message || "Weapon model unavailable" : "Loading weapon\u2026" }),
+      preview.status !== "ready" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "weapon-preview-status", role: "status", children: preview.status === "error" ? preview.message || "Weapon model unavailable" : "Loading weapon\u2026" }),
       panel.slots.map((slot) => {
         const anchor = preview.anchors[slot.id];
         if (!anchor || preview.status !== "ready") return null;
         const isCompatible = Boolean(draggedItem && slot.compatibleItems.includes(draggedItem.name));
         const isHighlighted = isCompatible && destination?.isWeaponInspection;
-        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "button",
           {
             type: "button",
@@ -17239,13 +17600,13 @@
     ] });
   }
   function DockingSlots() {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
         id: "docking-slots",
         hidden: !inventoryState.areDockSlotsVisible,
         "aria-hidden": "true",
-        children: getDockSlots(innerWidth, innerHeight).map((slot) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        children: getDockSlots(innerWidth, innerHeight).map((slot) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "div",
           {
             "data-dock-slot": slot.id,
@@ -17263,29 +17624,39 @@
     );
   }
   function InventorySettings() {
-    const moveDisplaysButton = (0, import_react.useRef)(null);
-    (0, import_react.useLayoutEffect)(() => {
-      if (inventoryState.settingsOpen && !inventoryState.hudPositioning) moveDisplaysButton.current?.focus();
-    }, [inventoryState.settingsOpen, inventoryState.hudPositioning]);
+    const [appearanceOpen, setAppearanceOpen] = (0, import_react2.useState)(false);
+    const moveDisplaysButton = (0, import_react2.useRef)(null);
+    const editableAppearance = inventoryState.playerSettings.appearanceEditable === true;
+    const showAppearance = appearanceOpen && editableAppearance;
+    (0, import_react2.useEffect)(() => {
+      if (!inventoryState.settingsOpen) setAppearanceOpen(false);
+    }, [inventoryState.settingsOpen]);
+    (0, import_react2.useLayoutEffect)(() => {
+      if (inventoryState.settingsOpen && !inventoryState.hudPositioning && !showAppearance) moveDisplaysButton.current?.focus();
+    }, [inventoryState.settingsOpen, inventoryState.hudPositioning, showAppearance]);
     if (!inventoryState.settingsOpen) return null;
-    if (inventoryState.hudPositioning) return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "hud-position-toolbar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Drag the previews to position your displays." }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { onClick: () => setHudPositioning(false), children: "Done" })
+    if (inventoryState.hudPositioning) return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "hud-position-toolbar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "Drag the previews to position your displays." }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { onClick: () => setHudPositioning(false), children: "Done" })
     ] });
     const saving = inventoryState.settingsSaving;
     const muted = inventoryState.settingsDraft.soundMuted === true;
     const soundsDisabled = saving || !inventoryState.sounds.enabled;
     const volume2 = Math.round((inventoryState.settingsDraft.soundVolume ?? inventoryState.sounds.volume ?? 0.2) * 100);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-overlay", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { id: "inventory-settings", role: "dialog", "aria-modal": "true", "aria-labelledby": "settings-title", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "settings-title", children: "Inventory settings" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { "aria-label": "Close settings", disabled: saving, onClick: closeInventorySettings, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M2 2l8 8M10 2l-8 8" }) }) })
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "settings-overlay", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { id: "inventory-settings", className: showAppearance ? "appearance-open" : void 0, role: "dialog", "aria-modal": "true", "aria-labelledby": "settings-title", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("strong", { id: "settings-title", children: "Inventory settings" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { "aria-label": "Close settings", disabled: saving, onClick: closeInventorySettings, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("path", { d: "M2 2l8 8M10 2l-8 8" }) }) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-content", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "display-settings-title", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "display-settings-title", children: "Displays" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("nav", { className: "settings-tabs", "aria-label": "Inventory settings sections", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { "aria-pressed": !showAppearance, disabled: saving, onClick: () => setAppearanceOpen(false), children: "General" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { "aria-pressed": showAppearance, disabled: saving || !editableAppearance, onClick: () => setAppearanceOpen(true), children: editableAppearance ? "Appearance" : "Appearance locked" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "settings-content", children: showAppearance ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(AppearanceSettings, { saving }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "settings-group", "aria-labelledby": "display-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { id: "display-settings-title", children: "Displays" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -17296,8 +17667,8 @@
             ),
             "Weapon display"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -17308,15 +17679,15 @@
             ),
             "Item notifications"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-volume", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "notification-duration", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "settings-volume", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { htmlFor: "notification-duration", children: [
               "Notification duration ",
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { children: [
                 ((inventoryState.settingsDraft.notificationDuration ?? 2500) / 1e3).toFixed(1),
                 "s"
               ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 id: "notification-duration",
@@ -17330,16 +17701,16 @@
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Place your weapon display and item notifications." }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-button-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { ref: moveDisplaysButton, disabled: saving, onClick: () => setHudPositioning(true), children: "Move displays" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: resetHudPositions, children: "Reset positions" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { children: "Place your weapon display and item notifications." }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "settings-button-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { ref: moveDisplaysButton, disabled: saving, onClick: () => setHudPositioning(true), children: "Move displays" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { disabled: saving, onClick: resetHudPositions, children: "Reset positions" })
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "sound-settings-title", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "sound-settings-title", children: "Sounds" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "sound-mute", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "settings-group", "aria-labelledby": "sound-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { id: "sound-settings-title", children: "Sounds" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "sound-mute", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -17350,15 +17721,15 @@
             ),
             "Mute UI sounds"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-volume", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { htmlFor: "sound-volume", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "settings-volume", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { htmlFor: "sound-volume", children: [
               "Volume ",
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { children: [
                 volume2,
                 "%"
               ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 id: "sound-volume",
@@ -17372,13 +17743,13 @@
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: soundsDisabled || muted, onClick: previewInventorySound, children: "Test sound" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { disabled: soundsDisabled || muted, onClick: previewInventorySound, children: "Test sound" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-group", "aria-labelledby": "window-settings-title", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { id: "window-settings-title", children: "Inventory" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-field", htmlFor: "ui-scale", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "settings-group", "aria-labelledby": "window-settings-title", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { id: "window-settings-title", children: "Inventory" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "settings-field", htmlFor: "ui-scale", children: [
             "UI size",
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 id: "ui-scale",
@@ -17386,15 +17757,15 @@
                 disabled: saving,
                 onChange: (event) => setInventoryPreference("uiScale", event.target.value),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "small", children: "Small" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "medium", children: "Medium" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "large", children: "Large" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "small", children: "Small" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "medium", children: "Medium" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "large", children: "Large" })
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -17405,8 +17776,8 @@
             ),
             "Confirm dropping items"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "settings-toggle", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "settings-toggle", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -17417,20 +17788,20 @@
             ),
             "Remember open carried containers"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Restore your default window layout." }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: resetInventoryLayout, children: "Reset windows" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { children: "Restore your default window layout." }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { disabled: saving, onClick: resetInventoryLayout, children: "Reset windows" })
         ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-actions", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { disabled: saving, onClick: closeInventorySettings, children: "Cancel" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "confirm", disabled: saving, onClick: saveInventorySettings, children: saving ? "Saving..." : "Save" })
+      ] }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "settings-actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { disabled: saving, onClick: closeInventorySettings, children: "Cancel" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { className: "confirm", disabled: saving, onClick: saveInventorySettings, children: saving ? "Saving..." : "Save" })
       ] })
     ] }) });
   }
   function ThrowPowerMeter() {
     const power = inventoryState.throwPower;
     if (power === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
         className: "throw-power-meter",
@@ -17439,7 +17810,7 @@
         "aria-valuemin": 0,
         "aria-valuemax": 100,
         "aria-valuenow": Math.round(power * 100),
-        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "throw-power-fill", style: { height: `${power * 100}%` } })
+        children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "throw-power-fill", style: { height: `${power * 100}%` } })
       }
     );
   }
@@ -17450,7 +17821,7 @@
     const settings = preview ? inventoryState.settingsDraft : inventoryState.playerSettings;
     if (!preview && settings.weaponDisplay === false) return null;
     const position = settings.weaponHudPosition || { x: 0.94, y: 0.91 };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "aside",
       {
         className: `weapon-hud${preview ? " hud-preview" : ""}`,
@@ -17458,18 +17829,18 @@
         style: getHudPositionStyle(position, 172, 64),
         onPointerDown: (pointerEvent) => startHudDrag("weaponHudPosition", pointerEvent),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "weapon-hud-image", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemImage, { item: {
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "weapon-hud-image", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemImage, { item: {
             name: weapon.name,
             definition: { label: weapon.label, image: weapon.image, size: { x: 1, y: 1 } }
           } }) }),
-          weapon.showAmmo && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "weapon-hud-ammo", title: "Loaded ammunition / capacity", children: [
+          weapon.showAmmo && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "weapon-hud-ammo", title: "Loaded ammunition / capacity", children: [
             weapon.ammo,
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("small", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("small", { children: [
               " / ",
               weapon.clipSize
             ] })
           ] }),
-          preview && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "hud-preview-label", children: "Weapon display" })
+          preview && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "hud-preview-label", children: "Weapon display" })
         ]
       }
     );
@@ -17495,7 +17866,7 @@
         action: "added"
       }
     ] : inventoryState.itemBoxes;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "aside",
       {
         className: `item-box-notifications${inventoryState.settingsOpen ? " hud-preview" : ""}`,
@@ -17503,8 +17874,8 @@
         "data-position": settings.itemBoxPosition ? "custom" : "bottom-center",
         style,
         "aria-live": "polite",
-        children: notifications.map((notification) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "item-box-notification", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "item-box-image", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        children: notifications.map((notification) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "item-box-notification", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "item-box-image", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             ItemImage,
             {
               item: {
@@ -17513,45 +17884,52 @@
               }
             }
           ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: notification.action === "added" ? "Added" : "Removed" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: notification.action === "added" ? "Added" : "Removed" })
         ] }, notification.id))
       }
     );
   }
   function InventoryApp() {
-    (0, import_react.useEffect)(announceInventoryUiReady, []);
-    (0, import_react.useSyncExternalStore)(subscribeToInventory, getStoreVersion);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    (0, import_react2.useEffect)(announceInventoryUiReady, []);
+    (0, import_react2.useSyncExternalStore)(subscribeToInventory, getStoreVersion);
+    const savedSettings = inventoryState.playerSettings;
+    const appearance = inventoryState.settingsOpen ? inventoryState.settingsDraft.appearance : savedSettings.appearance;
+    (0, import_react2.useLayoutEffect)(() => applyAppearance({
+      appearance,
+      appearanceDefaults: savedSettings.appearanceDefaults,
+      appearanceEditable: savedSettings.appearanceEditable
+    }), [appearance, savedSettings.appearanceDefaults, savedSettings.appearanceEditable]);
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "main",
         {
           id: "inventory",
           hidden: !inventoryState.isOpen || inventoryState.hudPositioning,
           style: { "--cell": `${inventoryState.cellSize}px`, "--ui-scale": getInterfaceScale() },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(NearbyPlayerTargets, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventoryWorkspace, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClothingWindow, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(WeaponAttachmentWindow, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DockingSlots, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemTooltip, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemContextMenu, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(QuantityDialog, {}),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("footer", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: inventoryState.crafting || inventoryState.craftingPending ? "ESC \xB7 Cancel crafting" : "TAB / ESC \xB7 Close" }),
-              !inventoryState.crafting && !inventoryState.craftingPending && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Drag items \xB7 Right-click for actions" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { id: "reset", onClick: resetInventoryLayout, children: "Reset layout" })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(NearbyPlayerTargets, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventoryWorkspace, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ClothingWindow, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(WeaponAttachmentWindow, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DockingSlots, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemTooltip, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemContextMenu, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(QuantityDialog, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("footer", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: inventoryState.crafting || inventoryState.craftingPending ? "ESC \xB7 Cancel crafting" : "TAB / ESC \xB7 Close" }),
+              !inventoryState.crafting && !inventoryState.craftingPending && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "Drag items \xB7 Right-click for actions" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { id: "reset", onClick: resetInventoryLayout, children: "Reset layout" })
             ] })
           ]
         }
       ),
       (0, import_react_dom.createPortal)(
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DragGhost, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InventorySettings, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ItemBoxNotifications, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EquippedWeaponHud, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ThrowPowerMeter, {})
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DragGhost, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventorySettings, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ItemBoxNotifications, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(EquippedWeaponHud, {}),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(ThrowPowerMeter, {})
         ] }),
         document.body
       )
@@ -17559,10 +17937,10 @@
   }
 
   // src/main.jsx
-  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
   initialiseInventoryUi();
   var inventoryRoot = (0, import_client.createRoot)(document.getElementById("app-root"));
-  inventoryRoot.render(/* @__PURE__ */ (0, import_jsx_runtime2.jsx)(InventoryApp, {}));
+  inventoryRoot.render(/* @__PURE__ */ (0, import_jsx_runtime3.jsx)(InventoryApp, {}));
 })();
 /*! Bundled license information:
 

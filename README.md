@@ -90,7 +90,7 @@ Weapons and clothing can each be disabled in the configuration if another resour
 | **Hold D while moving a window** | Show the docking positions. |
 | **R while holding a weapon** | Reload outside the inventory. |
 | **ESC during crafting** | Cancel crafting. |
-| **/inventorysettings** | Customise displays, UI size, sounds, drop confirmation and remembered containers. |
+| **/inventorysettings** | Customise colours, displays, UI size, sounds, drop confirmation and remembered containers. |
 
 Dropping an item onto open screen space creates a world drop. Dropping it onto a nearby player's circle gives it to that player instead.
 
@@ -99,6 +99,12 @@ Items with `throwable = true` have a **Take to hand** option in the right-click 
 ### Move your displays
 
 Open `/inventorysettings` and choose **Move displays**. Drag the weapon display and item notification previews where you want them, choose **Done**, then **Save**. **Cancel** discards your changes. **Reset positions** restores their default placement. Positions are saved per character and adapt to your screen size.
+
+Open **Appearance** to recolour the inventory. Pick an area and adjust its RGB colour and opacity. Backgrounds also support two-colour gradients with direction and balance controls. Changes preview immediately. **Save** stores the theme per character, **Cancel** restores the saved theme, and **Reset theme** restores the server default.
+
+Start with **Cyberpunk**, **Ox Lib**, **Zombie**, or **Kora** and tweak it from there. **Shape and spacing** controls window radius, slot radius and window padding.
+
+Server owners can set `Config.Appearance.defaultTheme` in `config.lua`. Omitted areas use the original red theme. Set `allowCustomThemes = false` to enforce the server theme.
 
 You can toggle the weapon display and item notifications, set notification duration from 1–10 seconds, and choose Small, Medium or Large UI size. Small is the original size. Optional drop confirmation asks before dropping items into the world. Remember open carried containers reopens your last container windows when you open the inventory again, provided you still carry those containers. These settings are saved per character.
 

@@ -1,4 +1,5 @@
 import { configureSounds, playInventorySound } from "./sounds.js";
+import { appearanceLayout } from "./appearance.js";
 import { planCraft } from "./crafting.js";
 // FiveM messages and pointer interactions live here; React owns all rendered UI.
 import {
@@ -214,12 +215,13 @@ export function selectPaymentMethod(shop, paymentMethod) {
 
 export function getInventoryLayout(inventory, inventoryIndex = 0) {
   if (!inventoryState.layouts[inventory.id]) {
+    const padding = getInventoryPadding();
     const windowWidth = Math.min(
-      Math.max(220, inventory.size.x * inventoryState.cellSize + 16),
+      Math.max(220, inventory.size.x * inventoryState.cellSize + padding * 2),
       innerWidth - 24,
     );
     const windowHeight = Math.min(
-      inventory.size.y * inventoryState.cellSize + 60,
+      inventory.size.y * inventoryState.cellSize + 44 + padding * 2,
       innerHeight - 32,
     );
     const defaultX =
@@ -1143,6 +1145,13 @@ export function getInterfaceScale() {
   return { small: 1, medium: 1.125, large: 1.25 }[settings.uiScale] || 1;
 }
 
+export function getInventoryPadding() {
+  const settings = inventoryState.playerSettings;
+  return appearanceLayout(inventoryState.settingsOpen
+    ? { ...settings, appearance: inventoryState.settingsDraft.appearance }
+    : settings).padding;
+}
+
 function applyInterfaceScale() {
   inventoryState.cellSize = inventoryState.baseCellSize * getInterfaceScale();
 }
@@ -1167,6 +1176,13 @@ export function setSoundPreference(key, value) {
 
 export function previewInventorySound() {
   playInventorySound("move", inventoryState.settingsDraft);
+}
+
+export function setInventoryAppearance(appearance) {
+  if (!inventoryState.settingsOpen || inventoryState.settingsSaving ||
+      inventoryState.playerSettings.appearanceEditable !== true) return;
+  inventoryState.settingsDraft.appearance = appearance;
+  publishChanges();
 }
 
 export async function closeInventorySettings() {

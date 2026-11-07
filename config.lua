@@ -4,6 +4,17 @@ Config.TSS = {}
 Config.OpenKey = 'TAB'
 Config.CellSize = 48 -- identical for every inventory; overflow scrolls
 
+Config.Appearance = {
+    allowCustomThemes = true,
+    defaultTheme = {
+        -- Omit an area to keep the original colour.
+        -- accent = { mode = 'solid', first = '#d94a50', firstOpacity = 100 },
+        -- panel = { mode = 'gradient', first = '#17191c', second = '#282026',
+        --     firstOpacity = 95, secondOpacity = 85, angle = 90, balance = 60 },
+        -- layout = { windowRadius = 0, slotRadius = 0, padding = 8 },
+    },
+}
+
 Config.Sounds = {
     enabled = true,
     volume = 0.2, -- default player volume, from 0.0 to 1.0

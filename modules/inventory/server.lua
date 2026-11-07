@@ -182,6 +182,7 @@ local function getPlayerPreferences(inventory)
         confirmDropping = preferences.confirmDropping == true,
         rememberContainers = preferences.rememberContainers == true,
         uiScale = ({ small = true, medium = true, large = true })[preferences.uiScale] and preferences.uiScale or 'small',
+        appearance = TSSInventoryAppearance.Sanitize(preferences.appearance),
         windowLayoutVersion = tonumber(preferences.windowLayoutVersion) or 0,
         weaponHudPosition = validHudPosition(preferences.weaponHudPosition) and inventoryCore.copy(preferences.weaponHudPosition) or false,
         itemBoxPosition = validHudPosition(preferences.itemBoxPosition) and inventoryCore.copy(preferences.itemBoxPosition) or false,
@@ -189,6 +190,13 @@ local function getPlayerPreferences(inventory)
         soundVolume = type(preferences.soundVolume) == 'number' and preferences.soundVolume == preferences.soundVolume
             and math.max(0.0, math.min(1.0, preferences.soundVolume)) or (Config.Sounds and Config.Sounds.volume or 0.2),
     }
+end
+
+local function clientPreferences(preferences)
+    preferences.appearanceEditable = TSSInventoryAppearance.editable
+    preferences.appearanceDefaults = TSSInventoryAppearance.defaults
+    if not preferences.appearanceEditable then preferences.appearance = nil end
+    return preferences
 end
 
 local function snapshot(inventory, playerSource)
@@ -218,7 +226,7 @@ local function snapshot(inventory, playerSource)
         end
         result.clothing = clothingService and clothingService.View(playerSource) or nil
         result.craftingRecipes = craftingService and craftingService.Recipes() or {}
-        result.playerSettings = preferences
+        result.playerSettings = clientPreferences(preferences)
         result.itemKeybinds = inventoryCore.copy(inventory.settings.itemKeybinds or {})
     end
     result.settings = nil
@@ -1076,6 +1084,11 @@ local function handleAction(playerSource, request)
                 if not ({ small = true, medium = true, large = true })[request.settings.uiScale] then return false, 'Invalid UI size' end
                 preferences.uiScale = request.settings.uiScale
             end
+            if request.settings.appearance ~= nil and TSSInventoryAppearance.editable then
+                local appearance = TSSInventoryAppearance.Sanitize(request.settings.appearance)
+                if not appearance then return false, 'Invalid inventory theme' end
+                preferences.appearance = appearance
+            end
             preferences.notificationPosition = 'bottom-center'
         else
             preferences.windowLayoutVersion = preferences.windowLayoutVersion + 1
@@ -1340,7 +1353,7 @@ end)
 registerPlayerEvent('tss-inventory:openSettings', function(playerSource)
     local ownInventory, playerError = ensurePlayerInventory(playerSource)
     if not ownInventory then return false, playerError end
-    TriggerClientEvent('tss-inventory:settings', playerSource, getPlayerPreferences(ownInventory))
+    TriggerClientEvent('tss-inventory:settings', playerSource, clientPreferences(getPlayerPreferences(ownInventory)))
     return true
 end)
 
