@@ -41,7 +41,7 @@ import {
   setSoundPreference,
   setInventoryPreference,
   getInterfaceScale,
-  getInventoryPadding,
+  getFloatingInventoryBounds,
   previewInventorySound,
   getHudPositionStyle,
   startHudDrag,
@@ -229,11 +229,12 @@ function PlacementCells({ inventory }) {
 }
 
 function CraftingItem({ craft }) {
-  const width = craft.item.definition.size.x * inventoryState.cellSize;
-  const height = craft.item.definition.size.y * inventoryState.cellSize;
+  const footprint = getItemFootprint(craft.item);
+  const width = footprint.x * inventoryState.cellSize;
+  const height = footprint.y * inventoryState.cellSize;
   return <div className="crafting-item" style={{ left: (craft.item.x - 1) * inventoryState.cellSize,
     top: (craft.item.y - 1) * inventoryState.cellSize, width, height }}>
-    <ItemImage item={craft.item} />
+    <ItemImage item={craft.item} isRotated={craft.item.rotated === true} />
     <svg className="crafting-progress" width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
       <rect className="crafting-track" x="1.5" y="1.5" width={width - 3} height={height - 3} />
       <rect className="crafting-fill" x="1.5" y="1.5" width={width - 3} height={height - 3}
@@ -243,7 +244,10 @@ function CraftingItem({ craft }) {
 }
 
 function InventoryGrid({ inventory }) {
-  const craft = inventoryState.crafting?.inventoryId === inventory.id ? inventoryState.crafting : null;
+  const activeCraft = inventoryState.crafting;
+  const craft = activeCraft?.inventoryId === inventory.id ? activeCraft : null;
+  const ingredients = craft?.ingredients ??
+    (activeCraft?.sourceInventoryId === inventory.id ? activeCraft.sourceIngredients : null);
   return (
     <div className="body">
       <div
@@ -255,11 +259,11 @@ function InventoryGrid({ inventory }) {
         }}
       >
         {inventory.items.map((item) => {
-          const remainingAmount = craft?.ingredients?.[String(item.id)] ?? item.amount;
+          const remainingAmount = ingredients?.[String(item.id)] ?? item.amount;
           return remainingAmount > 0 && <InventoryItem key={item.id} inventory={inventory}
             item={remainingAmount === item.amount ? item : { ...item, amount: remainingAmount }} />;
         })}
-        {craft && <CraftingItem craft={craft} />}
+        {craft && <CraftingItem key={craft.step} craft={craft} />}
         <PlacementCells inventory={inventory} />
       </div>
     </div>
@@ -383,22 +387,19 @@ function InventoryWindow({
 }) {
   const layout = getInventoryLayout(inventory);
   const isDocked = dockSlotId !== null;
-  const dockBounds = isDocked ? getDockBounds(dockSlotId) : null;
+  const bounds = isDocked ? getDockBounds(dockSlotId) : getFloatingInventoryBounds(inventory, layout);
   const windowStyle = isDocked
     ? {
-        left: dockBounds.x,
-        top: dockBounds.y,
-        width: dockBounds.width,
-        height: layout.minimised ? undefined : dockBounds.height,
+        left: bounds.x,
+        top: bounds.y,
+        width: bounds.width,
+        height: layout.minimised ? undefined : bounds.height,
       }
     : {
-        left: Math.max(0, Math.min(innerWidth - 180, layout.x)),
-        top: Math.max(0, Math.min(innerHeight - 40, layout.y)),
-        width: Math.min(
-          inventory.size.x * inventoryState.cellSize + getInventoryPadding() * 2,
-          innerWidth - 24,
-        ),
-        maxHeight: Math.max(80, innerHeight - Math.max(0, layout.y) - 35),
+        left: bounds.x,
+        top: bounds.y,
+        width: bounds.width,
+        maxHeight: bounds.maxHeight,
         zIndex: layout.frontOrder || 10,
       };
 
@@ -581,6 +582,7 @@ function ItemTooltip() {
       <h3>{definition.label || item.name}</h3>
       <p>{definition.description || definition.category}</p>
       <DetailRow label="Weight" value={`${definition.weight / 1000} kg each`} />
+      {definition.magazine && <DetailRow label="Rounds" value={`${item.metadata?.rounds ?? 0} / ${definition.magazine.capacity}`} />}
       {item.canSell && item.sellPrice !== undefined && <DetailRow label="Sell price" value={`$${item.sellPrice} each`} />}
       {item.price !== undefined && (
         <>
@@ -673,6 +675,9 @@ function ItemContextMenu() {
           )}
           {inventoryState.weaponSystemEnabled && item.definition.weapon && (
             <button onClick={() => openWeaponAttachments(inventory, item)}>Attachments</button>
+          )}
+          {inventoryState.magazineReloadEnabled && item.hasLoadedMagazine && canGiveFromInventory(inventory) && (
+            <button onClick={() => requestItemAction(inventory, item, "unloadMagazine")}>Unload Magazine</button>
           )}
           {(binding || item.definition.useable !== false) &&
             (binding ? (
@@ -1135,7 +1140,8 @@ export function InventoryApp() {
         <ItemContextMenu />
         <QuantityDialog />
         <footer>
-          <span>{inventoryState.crafting || inventoryState.craftingPending ? "ESC · Cancel crafting" : "TAB / ESC · Close"}</span>
+          <span>{inventoryState.crafting?.kind === "fillMagazine" ? "ESC · Stop loading" :
+            inventoryState.crafting || inventoryState.craftingPending ? "ESC · Cancel crafting" : "TAB / ESC · Close"}</span>
           {!inventoryState.crafting && !inventoryState.craftingPending && <span>Drag items · Right-click for actions</span>}
           <button id="reset" onClick={resetInventoryLayout}>
             Reset layout

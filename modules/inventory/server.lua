@@ -129,7 +129,7 @@ local function loadInventory(inventoryId)
     placementCheck.items = {}
     local itemIds = {}
     local highestItemId = 0
-    local placementValid, containsClothing = true, false
+    local placementValid, containsResizedItems = true, false
     for _, item in ipairs(inventory.items) do
         local definition = inventoryCore.definition(item.name)
         if not definition or not inventoryCore.integer(item.id, 1, 1e12) or itemIds[item.id]
@@ -139,7 +139,7 @@ local function loadInventory(inventoryId)
             error('Saved items do not match item definitions: ' .. inventoryId)
         end
         if not inventoryCore.fits(placementCheck, item, item.x, item.y) then placementValid = false end
-        if definition.clothingSlot then containsClothing = true end
+        if definition.clothingSlot or definition.magazine then containsResizedItems = true end
         itemIds[item.id] = true
         highestItemId = math.max(highestItemId, item.id)
         placementCheck.items[#placementCheck.items + 1] = item
@@ -147,13 +147,13 @@ local function loadInventory(inventoryId)
     inventory.nextItemId = math.max(inventory.nextItemId, highestItemId + 1)
     inventory.settings = inventory.settings or {}
     if not placementValid then
-        -- Clothing used to occupy 1x1 cells. Repack existing items after the size update.
-        local repacked = containsClothing and not inventory.metadata.clothingEquipment and inventoryCore.repack
+        -- Clothing and magazines previously occupied one cell.
+        local repacked = containsResizedItems and not inventory.metadata.clothingEquipment and inventoryCore.repack
             and inventoryCore.repack(inventory, true)
         if not repacked then error('Saved items do not fit inventory: ' .. inventoryId) end
         inventory.revision = inventory.revision + 1
         local saved, saveError = database.Save({ inventory })
-        if not saved then error(saveError or 'Could not save resized clothing layout') end
+        if not saved then error(saveError or 'Could not save resized item layout') end
     end
     inventories[inventoryId] = inventory
     committedInventories[inventoryId] = inventoryCore.copy(inventory)
@@ -230,7 +230,10 @@ local function snapshot(inventory, playerSource)
         result.itemKeybinds = inventoryCore.copy(inventory.settings.itemKeybinds or {})
     end
     result.settings = nil
-    for _, item in ipairs(result.items) do item.definition = inventoryCore.itemDefinition(item) end
+    for _, item in ipairs(result.items) do
+        item.definition = inventoryCore.itemDefinition(item)
+        if TSSWeaponData.MagazineReloadEnabled() and TSSWeaponData.LoadedMagazine(item) then item.hasLoadedMagazine = true end
+    end
     return result
 end
 
@@ -1122,6 +1125,18 @@ local function handleAction(playerSource, request)
     if request.kind == 'openAttachments' then return attachmentService.Open(playerSource, sourceInventory, request.itemId) end
     if request.kind == 'installAttachment' then return attachmentService.Install(playerSource, sourceInventory, request) end
     if request.kind == 'craft' then return craftingService.Start(playerSource, sourceInventory, request) end
+    if request.kind == 'unloadMagazine' then return weaponService.UnloadMagazine(playerSource, sourceInventory, request.itemId) end
+    if request.kind == 'fillMagazine' then
+        if not inventorySession[request.to] then return false, 'Inventory access denied' end
+        local targetInventory = loadInventory(request.to)
+        if not targetInventory or targetInventory.revision ~= request.targetRevision then
+            sendInventories(playerSource)
+            return false, 'Inventory changed; try again'
+        end
+        if inventoryLocks[targetInventory.id] then return false, 'Inventory is busy' end
+        if not storageService.CanAccess(playerSource, targetInventory.id) then return false, 'Storage is no longer accessible' end
+        return weaponService.FillMagazine(playerSource, sourceInventory, targetInventory, request)
+    end
     if request.kind == 'buy' then
         if sourceInventory.type ~= 'shop' or not inventorySession[request.to] then return false, 'Shop access denied' end
         return shopService.Buy(playerSource, request)
@@ -1685,7 +1700,8 @@ dropService = TSSCreateWorldDropService(inventoryContext)
 shopService = TSSCreateShopService(inventoryContext)
 
 weaponService = TSSCreateWeaponService({
-    find = findCarriedItem, load = loadInventory, locks = inventoryLocks, commit = commit,
+    find = findCarriedItem, load = loadInventory, locks = inventoryLocks, commit = commit, metadata = cleanMetadata,
+    startTimedAction = craftingService.StartTimedAction,
     busy = function(playerSource) return craftingService.Active(playerSource) end,
     close = function(playerSource)
         sessions[playerSource] = nil
@@ -1760,10 +1776,11 @@ if Config.EnableWeaponSystem then
         runOperation(weaponService.Report, playerSource, token, ammo)
     end)
     registerPlayerEvent('tss-inventory:weaponReload', weaponService.Reload)
-    registerPlayerEvent('tss-inventory:weaponInvalid', function(playerSource, token)
+    registerPlayerEvent('tss-inventory:weaponInvalid', function(playerSource, token, clipSyncFailed)
         local state = weaponService.Get(playerSource)
         if not state or state.token ~= token then return false end
         weaponService.Unequip(playerSource)
+        if clipSyncFailed == true then return false, 'The game could not load this magazine. Your ammo was kept.' end
         return false, 'This weapon is unavailable in the current game build or needs its addon assets'
     end)
     RegisterNetEvent('tss-inventory:weaponHolster', function(token)

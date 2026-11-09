@@ -42,8 +42,44 @@ local function copyValue(value)
     return copiedValue
 end
 
+local magazineAnimationDictionary = 'anim@heists@prison_heistig1_p1_guard_checks_bus'
+local magazineAnimationClip = 'loop'
+local magazineAnimationFlags = 1 | 16 | 32 -- Looping, upper body, secondary task.
+local magazineAnimation
+
+local function stopMagazineAnimation()
+    local animation = magazineAnimation
+    if not animation then return end
+    magazineAnimation = nil
+    if animation.playing and DoesEntityExist(animation.ped) then
+        StopAnimTask(animation.ped, magazineAnimationDictionary, magazineAnimationClip, 4.0)
+    end
+    RemoveAnimDict(magazineAnimationDictionary)
+end
+
+local function startMagazineAnimation()
+    if magazineAnimation then return end
+    local playerPed = PlayerPedId()
+    local animation = { ped = playerPed }
+    magazineAnimation = animation
+    SetCurrentPedWeapon(playerPed, joaat('weapon_unarmed'), true)
+    RequestAnimDict(magazineAnimationDictionary)
+    CreateThread(function()
+        local loadDeadline = GetGameTimer() + 2000
+        while magazineAnimation == animation and not HasAnimDictLoaded(magazineAnimationDictionary) do
+            if GetGameTimer() >= loadDeadline then return end
+            Wait(0)
+        end
+        if magazineAnimation ~= animation or PlayerPedId() ~= playerPed or IsEntityDead(playerPed) then return end
+        TaskPlayAnim(playerPed, magazineAnimationDictionary, magazineAnimationClip,
+            4.0, -4.0, -1, magazineAnimationFlags, 1.0, false, false, false)
+        animation.playing = true
+    end)
+end
+
 local function closeInventory(shouldNotifyServer)
     if isCrafting and shouldNotifyServer ~= false then return false end
+    stopMagazineAnimation()
     isOpen = false
     lastOpenMessage = nil
     if TSSInventoryClient and TSSInventoryClient.Giving then TSSInventoryClient.Giving.Stop() end
@@ -85,6 +121,8 @@ RegisterNetEvent('tss-inventory:crafting', function(craft)
     if source ~= 65535 then return end
     pendingCraftRequestId = nil
     isCrafting = type(craft) == 'table'
+    if isCrafting and craft.kind == 'fillMagazine' then startMagazineAnimation()
+    else stopMagazineAnimation() end
     sendUiMessage({ type = 'crafting', craft = craft })
 end)
 
@@ -98,7 +136,7 @@ RegisterNetEvent('tss-inventory:sync', function(inventories, visibleMetadata, ce
     if source ~= 65535 then return end
     isOpen = true
     lastOpenMessage = { type = 'sync', inventories = inventories, visibleMetadata = visibleMetadata, cellSize = cellSize, rarity = Config.Rarity,
-        weaponSystemEnabled = Config.EnableWeaponSystem == true, clothingEnabled = Config.EnableClothingSystem == true, sounds = Config.Sounds }
+        weaponSystemEnabled = Config.EnableWeaponSystem == true, magazineReloadEnabled = TSSWeaponData.MagazineReloadEnabled(), clothingEnabled = Config.EnableClothingSystem == true, sounds = Config.Sounds }
     sendUiMessage(lastOpenMessage)
     if uiReady then SetNuiFocus(true, true) end
 end)
@@ -206,7 +244,7 @@ RegisterNUICallback('action', function(request, callback)
     if TSSInventoryClient and TSSInventoryClient.FlushWeaponAmmo then TSSInventoryClient.FlushWeaponAmmo() end
     nextRequestId = nextRequestId + 1
     local requestId = nextRequestId
-    if request.kind == 'craft' then
+    if request.kind == 'craft' or request.kind == 'fillMagazine' then
         isCrafting = true
         pendingCraftRequestId = requestId
     end
@@ -275,7 +313,9 @@ CreateThread(function()
 end)
 
 AddEventHandler('onResourceStop', function(resourceName)
-    if resourceName == GetCurrentResourceName() then SetNuiFocus(false, false) end
+    if resourceName ~= GetCurrentResourceName() then return end
+    stopMagazineAnimation()
+    SetNuiFocus(false, false)
 end)
 
 -- Read keyboard state directly; item bindings never register FiveM commands/mappings.

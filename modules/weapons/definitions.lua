@@ -37,6 +37,25 @@ function TSSWeaponData.Installed(item)
     return installed
 end
 
+function TSSWeaponData.MagazineReloadEnabled()
+    return Config.EnableWeaponSystem == true and Config.WeaponAmmoSystem == 'magazine'
+end
+
+function TSSWeaponData.MagazineItem(item)
+    local weapon = TSSItems[item.name]
+    if not weapon or not weapon.magazineItems then return nil end
+    local attachment = TSSWeaponData.Installed(item).magazine
+    return weapon.magazineItems[attachment and attachment.record.name or 'standard']
+end
+
+function TSSWeaponData.LoadedMagazine(item)
+    local magazine = item.metadata and item.metadata.loadedMagazine
+    local magazineName = TSSWeaponData.MagazineItem(item)
+    if not magazineName or type(magazine) ~= 'table' or magazine.name ~= magazineName
+        or type(magazine.metadata) ~= 'table' then return nil end
+    return magazine
+end
+
 function TSSWeaponData.Components(item)
     local components, tint = {}, nil
     for _, installed in pairs(TSSWeaponData.Installed(item)) do
@@ -49,7 +68,8 @@ function TSSWeaponData.Components(item)
 end
 
 function TSSWeaponData.AttachedWeight(item)
-    local weight = 0
+    local magazine = TSSWeaponData.LoadedMagazine(item)
+    local weight = magazine and TSSItems[magazine.name].weight or 0
     for _, installed in pairs(TSSWeaponData.Installed(item)) do weight = weight + installed.definition.weight end
     return weight
 end

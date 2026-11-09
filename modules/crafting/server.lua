@@ -35,12 +35,65 @@ function TSSCreateCraftingService(context)
         return activeCrafts[playerSource] ~= nil
     end
 
+    local function releaseCraft(playerSource, craft)
+        activeCrafts[playerSource] = nil
+        for inventoryId in pairs(craft.revisions) do context.locks[inventoryId] = nil end
+    end
+
     function craftingService.Cancel(playerSource)
         local craft = activeCrafts[playerSource]
         if not craft then return true end
-        activeCrafts[playerSource] = nil
-        context.locks[craft.inventoryId] = nil
+        releaseCraft(playerSource, craft)
         TriggerClientEvent('tss-inventory:crafting', playerSource, false)
+        return true
+    end
+
+    function craftingService.StartTimedAction(playerSource, plans, preview, canFinish, nextStep)
+        if craftingService.Active(playerSource) then return false, 'Inventory is busy' end
+        local revisions = {}
+        for inventoryId, plan in pairs(plans) do
+            if context.locks[inventoryId] then return false, 'Inventory is busy' end
+            revisions[inventoryId] = plan.revision
+        end
+        local craft = { ownerInventoryId = context.identity(playerSource), revisions = revisions }
+        activeCrafts[playerSource] = craft
+        for inventoryId in pairs(revisions) do context.locks[inventoryId] = true end
+
+        preview.item = inventoryCore.copy(preview.item)
+        preview.item.definition = inventoryCore.itemDefinition(preview.item)
+        TriggerClientEvent('tss-inventory:crafting', playerSource, preview)
+
+        SetTimeout(preview.duration, function()
+            if activeCrafts[playerSource] ~= craft then return end
+            local succeeded, failure = context.operation(function()
+                if activeCrafts[playerSource] ~= craft then return true end
+                if context.identity(playerSource) ~= craft.ownerInventoryId then return false, 'Character session changed' end
+                if canFinish and not canFinish() then return false, 'Carry the ammunition and magazine to finish loading' end
+                local changed = {}
+                for inventoryId, revision in pairs(revisions) do
+                    local inventory = context.load(inventoryId)
+                    if not inventory or inventory.revision ~= revision then return false, 'Crafting inventory changed' end
+                    changed[#changed + 1] = inventory
+                end
+                for _, inventory in ipairs(changed) do
+                    local plan = plans[inventory.id]
+                    inventory.items, inventory.nextItemId = plan.items, plan.nextItemId
+                end
+                context.commit(table.unpack(changed))
+                if nextStep and activeCrafts[playerSource] == craft then
+                    -- Start the next round within the same inventory operation.
+                    releaseCraft(playerSource, craft)
+                    return nextStep()
+                end
+                return true
+            end)
+            if activeCrafts[playerSource] == craft then
+                craftingService.Cancel(playerSource)
+            elseif not activeCrafts[playerSource] and nextStep then
+                TriggerClientEvent('tss-inventory:crafting', playerSource, false)
+            end
+            if not succeeded then context.notify(playerSource, failure or 'Crafting failed') end
+        end)
         return true
     end
 
@@ -77,37 +130,13 @@ function TSSCreateCraftingService(context)
             local valid, weightError = inventoryCore.validateWeights({ [inventory.id] = plannedInventory })
             if not valid then return false, weightError end
         end
-        local craft = { inventoryId = inventory.id, revision = inventory.revision, planned = plannedInventory }
-        activeCrafts[playerSource] = craft
-        context.locks[inventory.id] = true
-        local visibleOutput = inventoryCore.copy(output)
-        visibleOutput.definition = inventoryCore.itemDefinition(output)
         local ingredientAmounts = {}
         for _, ingredient in ipairs({ firstItem, secondItem }) do
             ingredientAmounts[tostring(ingredient.id)] = ingredient.amount - recipe.input[ingredient.name]
         end
-        TriggerClientEvent('tss-inventory:crafting', playerSource, {
-            inventoryId = inventory.id, item = visibleOutput, ingredients = ingredientAmounts, duration = recipe.duration,
+        return craftingService.StartTimedAction(playerSource, { [inventory.id] = plannedInventory }, {
+            inventoryId = inventory.id, item = output, ingredients = ingredientAmounts, duration = recipe.duration,
         })
-        SetTimeout(recipe.duration, function()
-            if activeCrafts[playerSource] ~= craft then return end
-            local succeeded, failure = context.operation(function()
-                if activeCrafts[playerSource] ~= craft then return true end
-                local currentInventory = context.load(craft.inventoryId)
-                if context.identity(playerSource) ~= craft.inventoryId or not currentInventory or currentInventory.revision ~= craft.revision then
-                    return false, 'Crafting inventory changed'
-                end
-                currentInventory.items = craft.planned.items
-                currentInventory.nextItemId = craft.planned.nextItemId
-                context.commit(currentInventory)
-                return true
-            end)
-            if activeCrafts[playerSource] == craft then
-                craftingService.Cancel(playerSource)
-                if not succeeded then context.notify(playerSource, failure or 'Crafting failed') end
-            end
-        end)
-        return true
     end
 
     return craftingService

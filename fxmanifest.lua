@@ -1,7 +1,7 @@
 fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
-version '1.0.3'
+version '1.0.4'
 description 'A Fivem inventory resource built to use TSS Bridge'
 dependencies { 'tss_bridge', 'oxmysql' }
 
@@ -14,6 +14,7 @@ shared_scripts {
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
+    'data/magazines.lua',
     'data/clothing.lua',
     'modules/clothing/definitions.lua',
     'modules/weapons/definitions.lua',
@@ -71,6 +72,7 @@ files {
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
+    'data/magazines.lua',
     'data/clothing.lua',
     'web/index.html',
     'web/style.css',

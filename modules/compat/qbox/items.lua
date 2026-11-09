@@ -6,6 +6,7 @@ local definitionFiles = {
     'data/items.lua',
     'data/weapons.lua',
     'data/attachments.lua',
+    'data/magazines.lua',
     'data/clothing.lua',
 }
 

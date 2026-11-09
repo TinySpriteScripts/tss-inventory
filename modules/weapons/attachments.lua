@@ -104,7 +104,17 @@ function TSSCreateAttachmentService(context)
         plannedWeapon = core.find(weaponPlan, weapon.id)
         local capacity = TSSWeaponData.ClipSize(plannedWeapon)
         local ammo = tonumber(plannedWeapon.metadata.ammo) or 0
-        if ammo > capacity then
+        local loadedMagazine = TSSWeaponData.LoadedMagazine(weapon)
+        if loadedMagazine and loadedMagazine.name ~= TSSWeaponData.MagazineItem(plannedWeapon) then
+            plannedWeapon.metadata.loadedMagazine = nil
+            plannedWeapon.metadata.ammo = 0
+            local returnedMetadata = core.copy(loadedMagazine.metadata)
+            returnedMetadata.rounds = ammo
+            local clean, metadataError = context.metadata(returnedMetadata)
+            if not clean then return false, metadataError end
+            local returned, returnError = core.add(returnPlan, loadedMagazine.name, 1, clean, nil, plans)
+            if not returned then return false, returnError end
+        elseif ammo > capacity then
             local definition = core.definition(plannedWeapon.name)
             if not definition.ammoItem then return false, 'Unload the weapon before removing this magazine' end
             plannedWeapon.metadata.ammo = capacity

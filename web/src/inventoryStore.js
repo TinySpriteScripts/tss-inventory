@@ -41,6 +41,7 @@ export const inventoryState = {
   visibleMetadata: {},
   rarity: { enable: false, tiers: {} },
   weaponSystemEnabled: false,
+  magazineReloadEnabled: false,
   equippedWeapon: null,
   throwPower: null,
   clothingEnabled: false,
@@ -213,25 +214,93 @@ export function selectPaymentMethod(shop, paymentMethod) {
   publishChanges();
 }
 
+export function getFloatingInventoryBounds(inventory, layout) {
+  const padding = getInventoryPadding();
+  const scale = getInterfaceScale();
+  const headerHeight = 34 * scale;
+  const footerHeight = inventory.type === "shop" ? 39 : 11 + 13 * scale;
+  const maxHeight = Math.max(80, innerHeight - Math.max(0, layout.y) - 35);
+  return {
+    x: Math.max(0, Math.min(innerWidth - 180, layout.x)),
+    y: Math.max(0, Math.min(innerHeight - 40, layout.y)),
+    width: Math.max(220, Math.min(inventory.size.x * inventoryState.cellSize + padding * 2, innerWidth - 24)),
+    height: layout.minimised ? headerHeight : Math.min(maxHeight,
+      headerHeight + inventory.size.y * inventoryState.cellSize + padding * 2 + footerHeight),
+    maxHeight,
+  };
+}
+
+function getOccupiedWindowBounds() {
+  const bounds = [];
+  const dockedInventories = new Map();
+  for (const inventory of inventoryState.inventories) {
+    const layout = inventoryState.layouts[inventory.id];
+    if (!layout) continue;
+    const dock = LEGACY_DOCK_SLOTS[layout.dock] || layout.dock;
+    if (DOCK_SLOT_IDS.includes(dock)) {
+      if (!dockedInventories.has(dock) || inventory.id === inventoryState.activeTabs[dock]) {
+        dockedInventories.set(dock, inventory);
+      }
+    } else {
+      bounds.push(getFloatingInventoryBounds(inventory, layout));
+    }
+  }
+  for (const [dock, inventory] of dockedInventories) {
+    const dockBounds = getDockBounds(dock);
+    bounds.push(inventoryState.layouts[inventory.id].minimised
+      ? { ...dockBounds, height: 34 * getInterfaceScale() + 2 }
+      : dockBounds);
+  }
+  return bounds;
+}
+
+function findOpenWindowPosition(preferred, size, occupied, gap) {
+  const maxX = innerWidth - size.width;
+  const maxY = innerHeight - 35 - size.height;
+  if (maxX < 0 || maxY < 0) return null;
+
+  // A free position can be reached by sliding to a screen or window edge.
+  const columns = [preferred.x, 0, maxX];
+  const rows = [preferred.y, 0, maxY];
+  for (const windowBounds of occupied) {
+    columns.push(windowBounds.x - size.width - gap, windowBounds.x + windowBounds.width + gap);
+    rows.push(windowBounds.y - size.height - gap, windowBounds.y + windowBounds.height + gap);
+  }
+
+  let bestPosition = null;
+  let bestDistance = Infinity;
+  for (const x of new Set(columns)) {
+    if (x < 0 || x > maxX) continue;
+    for (const y of new Set(rows)) {
+      if (y < 0 || y > maxY) continue;
+      const distance = (x - preferred.x) ** 2 + (y - preferred.y) ** 2;
+      if (distance >= bestDistance) continue;
+      const overlaps = occupied.some((windowBounds) =>
+        x < windowBounds.x + windowBounds.width + gap && x + size.width + gap > windowBounds.x &&
+        y < windowBounds.y + windowBounds.height + gap && y + size.height + gap > windowBounds.y);
+      if (!overlaps) {
+        bestPosition = { x, y };
+        bestDistance = distance;
+      }
+    }
+  }
+  return bestPosition;
+}
+
 export function getInventoryLayout(inventory, inventoryIndex = 0) {
   if (!inventoryState.layouts[inventory.id]) {
-    const padding = getInventoryPadding();
-    const windowWidth = Math.min(
-      Math.max(220, inventory.size.x * inventoryState.cellSize + padding * 2),
-      innerWidth - 24,
-    );
-    const windowHeight = Math.min(
-      inventory.size.y * inventoryState.cellSize + 44 + padding * 2,
-      innerHeight - 32,
-    );
-    const defaultX =
-      inventory.type === "shop"
-        ? innerWidth - windowWidth - 60
-        : 60 + inventoryIndex * 350;
-    const defaultY = 90 + inventoryIndex * 45;
+    const size = getFloatingInventoryBounds(inventory, { x: 0, y: 12 });
+    const defaultX = inventory.type === "shop" ? innerWidth - size.width - 60 : 60 + inventoryIndex * 350;
+    const preferred = {
+      x: Math.max(12, Math.min(defaultX, innerWidth - size.width - 12)),
+      y: Math.max(12, Math.min(90 + inventoryIndex * 45, innerHeight - size.height - 35)),
+    };
+    const occupied = getOccupiedWindowBounds();
+    const position = findOpenWindowPosition(preferred, size, occupied, 8)
+      || findOpenWindowPosition(preferred, size, occupied, 0)
+      || preferred;
     inventoryState.layouts[inventory.id] = {
-      x: Math.max(12, Math.min(defaultX, innerWidth - windowWidth - 12)),
-      y: Math.max(12, Math.min(defaultY, innerHeight - windowHeight - 12)),
+      ...position,
       dock: null,
       minimised: false,
       frontOrder: ++inventoryState.frontOrder,
@@ -315,7 +384,8 @@ export async function requestItemAction(
   }
   const { confirmed, ...actionDetails } = details;
   inventoryState.isRequestPending = true;
-  if (actionKind === "craft") inventoryState.craftingPending = true;
+  const isTimedAction = actionKind === "craft" || actionKind === "fillMagazine";
+  if (isTimedAction) inventoryState.craftingPending = true;
   clearPopups();
   publishChanges();
 
@@ -331,7 +401,7 @@ export async function requestItemAction(
       playInventorySound("reject");
       showNotice(response.message || "Action refused");
     } else {
-      if (["move", "quickMove", "storeInContainer", "repack"].includes(actionKind)) playInventorySound("move");
+      if (["move", "quickMove", "storeInContainer", "repack", "fillMagazine", "unloadMagazine"].includes(actionKind)) playInventorySound("move");
       else if (actionKind === "buy" || actionKind === "sell") playInventorySound("purchase");
       else if (["equipClothing", "unequipClothing", "installAttachment", "removeAttachment"].includes(actionKind)
         || actionKind === "use" && (item?.definition.weapon || item?.definition.clothingSlot)) playInventorySound("equip");
@@ -339,7 +409,7 @@ export async function requestItemAction(
     }
   } finally {
     inventoryState.isRequestPending = false;
-    if (actionKind === "craft") inventoryState.craftingPending = false;
+    if (isTimedAction) inventoryState.craftingPending = false;
     publishChanges();
   }
 }
@@ -799,6 +869,22 @@ function calculateDestination() {
     return (inventory.id !== drag.inventoryId || candidate.id !== item.id) && hoveredColumn >= candidate.x && hoveredColumn < candidate.x + footprint.x &&
       hoveredRow >= candidate.y && hoveredRow < candidate.y + footprint.y;
   });
+  const magazine = hoveredItem?.definition.magazine;
+  if (inventoryState.magazineReloadEnabled && magazine?.ammoItem === item.name
+    && findInventory(drag.inventoryId)?.type !== "shop") {
+    const rounds = hoveredItem.metadata?.rounds ?? 0;
+    const targetSize = getItemFootprint(hoveredItem);
+    return {
+      inventoryId: inventory.id,
+      magazineItemId: hoveredItem.id,
+      craft: rounds < magazine.capacity ? { item: hoveredItem } : null,
+      isValid: rounds < magazine.capacity,
+      reason: "Magazine is full",
+      highlight: { x: hoveredItem.x, y: hoveredItem.y, width: targetSize.x, height: targetSize.y },
+      screenX: gridBounds.left + (hoveredItem.x - 1) * inventoryState.cellSize,
+      screenY: gridBounds.top + (hoveredItem.y - 1) * inventoryState.cellSize,
+    };
+  }
   if (hoveredItem?.definition.container && inventory.type !== "shop" && findInventory(drag.inventoryId)?.type !== "shop") {
     const rules = hoveredItem.definition.containerRules || {};
     const canCarry = inventory.isOwn || inventory.isPlayerExtra || Boolean(inventory.metadata?.containerItem);
@@ -1040,6 +1126,15 @@ function finishItemDrag() {
     return;
   }
   const targetInventory = findInventory(destination.inventoryId);
+  if (destination.magazineItemId) {
+    if (targetInventory) void requestItemAction(sourceInventory, item, "fillMagazine", {
+      to: targetInventory.id,
+      targetRevision: targetInventory.revision,
+      targetItemId: destination.magazineItemId,
+      amount: drag.quantity,
+    });
+    return;
+  }
   if (destination.craft) {
     void requestItemAction(sourceInventory, item, "craft", {
       recipe: destination.craft.recipe, targetItemId: destination.craft.targetItemId,
@@ -1662,6 +1757,9 @@ function handleServerMessage(messageEvent) {
         }
       }
     }
+    const visibleInventoryIds = new Set(inventoryState.isOpen
+      ? inventoryState.inventories.map((inventory) => inventory.id)
+      : []);
     for (const inventory of message.inventories || []) {
       if (
         inventory.layoutSettings === undefined ||
@@ -1669,9 +1767,9 @@ function handleServerMessage(messageEvent) {
         windowDrag?.inventoryId === inventory.id
       )
         continue;
-      if (inventory.layoutSettings === false)
-        delete inventoryState.layouts[inventory.id];
-      else
+      if (inventory.layoutSettings === false) {
+        if (!visibleInventoryIds.has(inventory.id)) delete inventoryState.layouts[inventory.id];
+      } else {
         inventoryState.layouts[inventory.id] = {
           ...inventory.layoutSettings,
           dock: inventory.layoutSettings.dock || null,
@@ -1679,6 +1777,7 @@ function handleServerMessage(messageEvent) {
             inventoryState.layouts[inventory.id]?.frontOrder ||
             ++inventoryState.frontOrder,
         };
+      }
     }
     for (const inventory of message.inventories || []) {
       if (
@@ -1704,6 +1803,7 @@ function handleServerMessage(messageEvent) {
     inventoryState.visibleMetadata = message.visibleMetadata || {};
     inventoryState.rarity = message.rarity || { enable: false, tiers: {} };
     inventoryState.weaponSystemEnabled = message.weaponSystemEnabled === true;
+    inventoryState.magazineReloadEnabled = message.magazineReloadEnabled === true;
     inventoryState.clothingEnabled = message.clothingEnabled === true;
     inventoryState.clothing = ownInventory?.clothing || inventoryState.clothing;
     if (!inventoryState.clothingEnabled) {

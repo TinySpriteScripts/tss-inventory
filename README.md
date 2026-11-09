@@ -76,6 +76,12 @@ The database tables are created automatically. Player inventories, regular stora
 
 Weapons and clothing can each be disabled in the configuration if another resource handles them on your server.
 
+Set `Config.WeaponAmmoSystem = 'magazine'` to use detachable magazines. Drag loose ammunition onto a matching magazine to fill it. The crafting border shows progress, and **Esc** cancels the fill. Hover over the magazine to see its round count. Press **R** to swap in the fullest compatible magazine you carry. The previous magazine goes back into the inventory the spare came from, with its remaining rounds. Right-click a weapon and choose **Unload Magazine** to return its magazine to your main inventory so you can refill it.
+
+Set `Config.MagazineLoadingStyle` to `'full'` to fill the magazine in one pass, or `'perBullet'` to load one round each time the progress border completes. `Config.MagazineFillDuration` sets the time in milliseconds for each pass. In per-bullet mode, pressing **Esc** keeps any rounds that finished loading.
+
+For example, use `pistol_magazine` with the Pistol and `pistol_ammo`. A weapon with an extended clip or drum attachment takes the corresponding extended or drum magazine. Weapons without detachable magazines still reload from loose ammo. Set `Config.WeaponAmmoSystem = 'loose'` for the original reload system.
+
 ## Controls
 
 | Control | Action |

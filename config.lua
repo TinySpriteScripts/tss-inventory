@@ -145,6 +145,9 @@ Config.Throwing = {
 }
 
 Config.EnableWeaponSystem = true -- false leaves equipping and ammo handling to other resources
+Config.WeaponAmmoSystem = 'magazine' -- 'loose' uses individual rounds; 'magazine' swaps detachable magazines
+Config.MagazineLoadingStyle = 'perBullet' -- 'full' loads all selected rounds together; 'perBullet' loads one at a time
+Config.MagazineFillDuration = 500 -- milliseconds per fill in 'full' mode or per round in 'perBullet' mode
 Config.WeaponReloadDuration = 1500 -- milliseconds
 
 Config.EnableClothingSystem = true -- false disables clothing controls and appearance changes

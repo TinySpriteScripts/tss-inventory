@@ -190,6 +190,7 @@ button:hover {
 .status {
   color: var(--theme-muted, #aaa);
   font-size: 11px;
+  line-height: calc(13px * var(--ui-scale, 1));
   padding: 3px 9px 8px;
   display: flex;
   justify-content: flex-end;
@@ -558,6 +559,7 @@ input[type="number"]::-webkit-outer-spin-button {
   border: 1px solid var(--theme-border, #ffffff25);
   color: var(--theme-muted, #999);
   font-size: 11px;
+  line-height: 13px;
 }
 
 .payment-button[aria-pressed="true"] {

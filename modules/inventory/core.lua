@@ -174,7 +174,7 @@ function inventoryCore.weight(inventory, overrides, visitedInventories)
     return totalWeight
 end
 
-local function validatePlannedWeight(plannedInventories)
+function inventoryCore.validatePlannedWeight(plannedInventories)
     if Config.DynamicContainerWeight and inventoryCore.validateWeights then return inventoryCore.validateWeights(plannedInventories) end
     for _, inventory in pairs(plannedInventories) do
         if inventory.maxWeight and inventoryCore.weight(inventory) > inventory.maxWeight then return false, 'Weight limit exceeded' end
@@ -221,7 +221,7 @@ function inventoryCore.add(inventory, itemName, amount, metadata, isRotated, wei
     local plannedWeights = {}
     for inventoryId, planned in pairs(weightOverrides or {}) do plannedWeights[inventoryId] = planned end
     plannedWeights[plannedInventory.id] = plannedInventory
-    local weightValid, weightError = validatePlannedWeight(plannedWeights)
+    local weightValid, weightError = inventoryCore.validatePlannedWeight(plannedWeights)
     if not weightValid then return false, weightError end
     inventory.items = plannedInventory.items
     inventory.nextItemId = plannedInventory.nextItemId
@@ -282,7 +282,7 @@ function inventoryCore.move(sourceInventory, targetInventory, itemId, amount, co
         plannedTarget.items[#plannedTarget.items + 1] = movedItem
     end
 
-    local weightValid, weightError = validatePlannedWeight({ [plannedSource.id] = plannedSource, [plannedTarget.id] = plannedTarget })
+    local weightValid, weightError = inventoryCore.validatePlannedWeight({ [plannedSource.id] = plannedSource, [plannedTarget.id] = plannedTarget })
     if not weightValid then return false, weightError end
     sourceInventory.items = plannedSource.items
     sourceInventory.nextItemId = plannedSource.nextItemId
